@@ -1,6 +1,6 @@
 {
   "name": "pi-transcript-ui",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Compact tool summaries for Pi with optional purpose text and adjacent-call grouping. Native execution and expanded output are preserved.",
   "files": [
     "src/",
