@@ -201,7 +201,7 @@ function compactPath(token: CommandPreviewPlan, tracing: boolean): CommandPrevie
 function stageText(stage: Stage, tracing: boolean): { head: CommandPreviewPlan; full: CommandPreviewPlan } | undefined {
   if (stage.kind === "tail") {
     const name = /^([A-Za-z_][A-Za-z0-9_.-]*)(?=[ \t\n]|$)/.exec(stage.source)?.[1];
-    const text = plain(name ? `${clip(plain(name), 20).text} […]` : "[…]");
+    const text = literal(name ? `${clip(literal(name, tracing), 20).text} […]` : "[…]", tracing);
     return { head: text, full: text };
   }
   let index = 0;
@@ -235,7 +235,6 @@ function preview(command: string, width: number, shell: "bash" | "powershell", m
   if (mode === "raw" || shell !== "bash" || widthOf(firstLine) <= width && newline < 0) return clip(firstLine, width);
   const parsed = stages(command, tracing);
   if (!parsed) return fallback();
-  const finish = (value: CommandPreviewPlan) => parsed.some(stage => stage.kind === "tail") ? plain(value.text) : value;
   const descriptions = parsed.map(stage => stageText(stage, tracing));
   if (descriptions.some(value => !value)) return fallback();
   const parts = descriptions.map((value, i) => {
@@ -252,8 +251,8 @@ function preview(command: string, width: number, shell: "bash" | "powershell", m
     marker = literal(parsed.at(-1)?.kind === "tail" ? " [more]" : ` [+${parts.length - count}]`, tracing, "marker");
   }
   if (minimum(count) + widthOf(marker) > width) {
-    if (widthOf(marker) + 1 > width) return finish(clip(parts[0]!.head, width));
-    return finish(concat(clip(parts[0]!.head, width - widthOf(marker)), marker));
+    if (widthOf(marker) + 1 > width) return clip(parts[0]!.head, width);
+    return concat(clip(parts[0]!.head, width - widthOf(marker)), marker);
   }
   const shown = parts.slice(0, count);
   const budgets = shown.map(part => Math.min(24, widthOf(part.head)));
@@ -273,13 +272,13 @@ function preview(command: string, width: number, shell: "bash" | "powershell", m
       budgets[i] = budgets[i]! + add; extra -= add;
     }
   }
-  return finish(concat(...shown.map((part, i) => {
+  return concat(...shown.map((part, i) => {
     const budget = budgets[i]!, headWidth = widthOf(part.head), detailWidth = budget - headWidth;
     const detail = slice(part.full, part.head.text.length);
     const fragment = detailWidth <= 3 && widthOf(detail) > detailWidth ? literal(" …", tracing, "marker") : detail;
     const text = budget < headWidth ? clip(part.head, budget) : concat(part.head, clip(fragment, detailWidth));
     return concat(part.separator, text);
-  }), marker));
+  }), marker);
 }
 
 /** Compact prioritizes command heads; Raw retains the width-bounded first-line fallback. */

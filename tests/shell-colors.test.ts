@@ -69,6 +69,54 @@ it("maps 400 projections to original native colors or the unchanged plain fallba
   }
 });
 
+it("colors confirmed regions without interpreting opaque tails, including long clipped names", () => {
+  const prefixes = ['set -e\ncd /tmp\n', 'echo "cd"\ncd /tmp\n', 'pri\\\nntf x\ncd /tmp\n'];
+  const tails = ["node <<'JS'\ncd fake\nJS\npwd", "very_long_opaque_program_name <<EOF\ncd fake\nEOF", 'echo "first\ncd\nlast"', 'for x in a; do cd /tmp; done', 'echo `pwd`', '# cd comment\npwd'];
+  for (const palette of ["dark", "light"]) {
+    initTheme(palette);
+    for (const prefix of prefixes) for (const tail of tails) {
+      const source = prefix + tail;
+      const colorizer = createCommandColorizer();
+      try {
+        for (const width of [1, 8, 24, 80, 120]) {
+          const raw = commandPreview(source, width), plan = commandPreviewPlan(source, width);
+          const actual = colorizer.format({ source, width, offset: 0, length: raw.length }, raw, theme);
+          expect(stripTerminalSequences(actual)).toBe(stripTerminalSequences(raw));
+          if (width === 120) expect(actual).toContain(theme.fg("syntaxType", "cd"));
+          const native = characterColors(highlightCode(source, "bash").join("\n"), source);
+          const expected = Array<string>(plan.text.length).fill("");
+          for (const span of plan.spans ?? []) {
+            if (typeof span.origin === "number") expect(span.origin + span.end - span.start).toBeLessThanOrEqual(prefix.length);
+            for (let i = span.start; i < span.end; i++) expected[i] = span.origin === "marker" ? theme.getFgAnsi("muted") : native[span.origin + i - span.start]!;
+          }
+          expect(characterColors(actual, plan.text)).toEqual(expected);
+        }
+      } finally { colorizer.clear(); }
+    }
+  }
+});
+
+it("retains bounds and cache invalidation for partially colored requests", () => {
+  initTheme("dark");
+  const highlight = vi.fn((source: string) => highlightCode(source, "bash").join("\n"));
+  const colorizer = createCommandColorizer(highlight);
+  const render = (source: string, width = 80) => colorizer.format({ source, width, offset: 0, length: 0 }, commandPreview(source, width), theme);
+  const source = 'cd /tmp\nnode <<EOF\nx\nEOF';
+  try {
+    expect(render(source)).toContain(theme.fg("syntaxType", "cd"));
+    render(source, 120); render(source, 120);
+    expect(highlight).toHaveBeenCalledTimes(1);
+    initTheme("light"); render(source);
+    expect(highlight).toHaveBeenCalledTimes(2);
+    render(source.replace('/tmp', '/other'));
+    expect(highlight).toHaveBeenCalledTimes(3);
+    for (const refused of ['cd /tmp\nnode <<EOF\n' + 'x'.repeat(17000) + '\nEOF', 'cd /tmp\nnode <<EOF\n\x1b[31m\nEOF']) expect(render(refused)).toBe(commandPreview(refused, 80));
+    expect(highlight).toHaveBeenCalledTimes(3);
+    render(source);
+    expect(highlight).toHaveBeenCalledTimes(4);
+  } finally { colorizer.clear(); }
+});
+
 it("reuses source styles across widths and invalidates by source/palette value or clear", () => {
   initTheme("dark");
   const highlight = vi.fn((source: string) => highlightCode(source, "bash").join("\n"));

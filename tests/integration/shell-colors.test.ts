@@ -27,7 +27,7 @@ it.each([false, true].flatMap(grouped => ["running", "success", "error"].map(sta
     const referenceDetach = attachTranscriptPresentation(reference.root, { ...options, getTheme: plainTheme });
     const detach = attachTranscriptPresentation(trial.root, options);
     try {
-      for (const palette of ["dark", "light"]) for (const command of ['echo "$HOME"\npwd', 'echo "$PATH"\npwd', 'echo "👩‍💻 e\\\ń"\npwd']) {
+      for (const palette of ["dark", "light"]) for (const command of ['echo "$HOME"\npwd', 'echo "$PATH"\npwd', 'echo "👩‍💻 e\\\ń"\npwd', 'echo "$HOME"\ncd /tmp\nnode <<EOF\ncd fake\nEOF']) {
         initTheme(palette); args.command = command;
         for (const tool of [...reference.tools, ...trial.tools]) tool.updateArgs(args);
         for (const width of [1, 8, 24, 48, 120, 180]) for (const [i, tool] of trial.tools.entries()) {
