@@ -9,6 +9,13 @@ import { fileMutationPath, type FileMutation } from "./file-mutation.js";
 import { commandPreview, type CommandPreviewMode } from "./command-preview.js";
 import { pathPreview } from "./path-preview.js";
 
+export interface CommandSpan {
+  readonly source: string;
+  readonly width: number;
+  readonly offset: number;
+  readonly length: number;
+}
+
 export interface DisplayLimits {
   rowMaxWidth: number;
   commandMaxWidth: number;
@@ -197,6 +204,8 @@ function summaryParts(toolName: string, display: ToolDisplay | null, outcome: st
   const shownTarget = display && targetBudget > 0 ? targetText(display.target, limits, targetBudget) : "";
   const head = shownTarget ? ` ${shownTarget}` : "";
   return { marker: "▸", action, rest: `${head}${outcome}${tail}${ending}`,
+    ...(shownTarget && display?.target.kind === "command" && display.target.shell !== "powershell" && limits.commandPreview === "compact"
+      ? { command: { source: display.target.command, width: Math.min(targetBudget, limits.commandMaxWidth), offset: 1, length: shownTarget.length } } : {}),
     ...(tail ? { intent: { offset: head.length + outcome.length, length: tail.length } } : {}),
     ...(delta ? { change: { ...delta, offset: head.length } } : {}) };
 }
@@ -267,6 +276,7 @@ export interface LineParts {
   readonly action: string;
   /** Everything after the action, leading space included (or "" / "…"). */
   readonly rest: string;
+  readonly command?: CommandSpan;
   readonly intent?: Readonly<{ offset: number; length: number }>;
   readonly change?: CountedChange & { offset: number };
   readonly failure?: Readonly<{ count: number; offset: number }>;

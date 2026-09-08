@@ -3,15 +3,18 @@ import { isAbsolute, normalize, resolve } from "node:path";
 import { isRecord } from "./intent.js";
 import { Spacer, stripTerminalSequences, truncateToWidth, type Component } from "@earendil-works/pi-tui";
 import { classifyTool, type ToolGroupingRules, type ToolClassification } from "./classify.js";
-import { changeText, failureText, countResultLines, displayFor, runningLine, settledLine, DEFAULT_DISPLAY_LIMITS, type DisplayLimits, type LineParts } from "./display.js";
+import { changeText, failureText, countResultLines, displayFor, runningLine, settledLine, DEFAULT_DISPLAY_LIMITS, type DisplayLimits, type LineParts, type CommandSpan } from "./display.js";
 import { intentFromArgs } from "./intent.js";
 import type { DisclosureTarget } from "./navigation.js";
 import { fileReadFor } from "./read-body.js";
 import { fileMutationFor } from "./file-mutation.js";
 import { summaryMetrics, type FileCapabilities } from "./tool-metrics.js";
 import { groupSummary, groupSummaryRequirements } from "./group-summary.js";
+import { createCommandColorizer } from "./shell-colors.js";
+import type { Theme } from "@earendil-works/pi-coding-agent";
 
 export interface RowTheme {
+  getFgAnsi?: Theme["getFgAnsi"];
   bold(text: string): string;
   fg(style: "error" | "toolDiffAdded" | "toolDiffRemoved" | "thinkingText", text: string): string;
 }
@@ -78,7 +81,8 @@ function readPathKey(tool: NativeToolComponent): string | undefined {
     ? JSON.stringify(["absolute", resolve(tool.cwd, path)]) : JSON.stringify(["relative", normalize(path)]);
 }
 
-export function styleLine(theme: RowTheme, parts: LineParts, error = false): string {
+export function styleLine(theme: RowTheme, parts: LineParts, error = false,
+  colorCommand?: (command: CommandSpan, text: string, theme: RowTheme) => string): string {
   let rest = parts.intent ? parts.rest.slice(0, parts.intent.offset) : parts.rest;
   if (parts.change && !error) {
     const { offset } = parts.change;
@@ -89,6 +93,10 @@ export function styleLine(theme: RowTheme, parts: LineParts, error = false): str
     const { count, offset } = parts.failure;
     const text = failureText(count);
     rest = rest.slice(0, offset) + theme.fg("error", text) + rest.slice(offset + text.length);
+  }
+  if (parts.command && colorCommand && !error) {
+    const { offset, length } = parts.command;
+    rest = rest.slice(0, offset) + colorCommand(parts.command, rest.slice(offset, offset + length), theme) + rest.slice(offset + length);
   }
   const line = `${parts.marker} ${theme.bold(parts.action)}${rest}`;
   const prefix = error ? theme.fg("error", line) : line;
@@ -216,6 +224,9 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
   for (const key of methodKeys) {
     descriptors.set(key, Object.getOwnPropertyDescriptor(tool, key));
   }
+  let colorizer: ReturnType<typeof createCommandColorizer> | undefined;
+  const colorCommand = (command: CommandSpan, text: string, theme: RowTheme): string =>
+    active ? (colorizer ??= createCommandColorizer()).format(command, text, theme) : text;
   const row = new SummaryRow((width) => {
     const indent = group && group.members.length > 1 ? "  " : "";
     const layout = { limits: options.displayLimits ?? DEFAULT_DISPLAY_LIMITS, ...(width === undefined ? {} : { width: Math.max(0, width - indent.length) }) };
@@ -227,7 +238,8 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
         metrics: summaryMetrics({ toolName: tool.toolName, args: tool.args, result: tool.result,
           isPartial: tool.isPartial, classification, capabilities }) })
       : runningLine(tool.toolName, display, intent, layout);
-    return `${indent}${styleLine(options.getTheme(), { ...parts, marker: tool.expanded ? "▾" : "▸" }, tool.result?.isError === true)}`;
+    if (tool.result?.isError === true || !parts.command) colorizer?.clear();
+    return `${indent}${styleLine(options.getTheme(), { ...parts, marker: tool.expanded ? "▾" : "▸" }, tool.result?.isError === true, colorCommand)}`;
   }, options.displayLimits?.rowMaxWidth);
   // This body is the entire original rendering, including its leading spacer,
   // shell, fallbacks and images. No text extraction, reindentation or truncation.
@@ -300,6 +312,7 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
   tool.setExpanded = setExpanded;
   return { target, get group() { return group; }, setGroup(next: ToolGroup | null) { group = next; }, release: () => {
     active = false;
+    colorizer?.clear();
     for (const [key, replacement] of [["render", render], ["updateDisplay", update], ["invalidate", invalidate], ["handleMouse", mouse], ["setExpanded", setExpanded], ["addChild", add], ["removeChild", remove], ["clear", clear]] as const) {
       if (Reflect.get(tool, key) !== replacement) continue;
       const descriptor = descriptors.get(key);

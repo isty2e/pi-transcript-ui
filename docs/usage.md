@@ -127,6 +127,8 @@ Shell settings such as `set` are displayed as ordinary commands, not hidden or c
 
 Slash-shaped arguments can be shortened even when they are not filesystem paths. A preview shows requested syntax, not which branches actually executed. It is not a copyable replacement command. Neither mode is secret redaction; sensitive argument values may remain visible.
 
+Compact Bash previews use Pi's syntax colors from the original command; generated markers use the theme's muted color. Coloring is best effort: opaque or oversized commands and unsupported highlighting output can retain plain text. Failed rows keep their error color. Raw and PowerShell previews are unchanged.
+
 Compact does not fully parse shell scripts. Heredocs, quoted newlines and other unsupported syntax stop interpretation: earlier recognized commands remain visible, followed by an opaque remainder such as `python […]`. Body lines are not counted as outer commands. Unsupported initial single-line syntax and commands too large to compact use a first-line preview; multiline fallback also marks omitted content with `[…]`.
 
 PowerShell always uses the raw first-line form.
