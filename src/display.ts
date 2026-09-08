@@ -196,7 +196,9 @@ function summaryParts(toolName: string, display: ToolDisplay | null, outcome: st
   const targetBudget = Math.max(0, remaining - visibleWidth(tail) - 1);
   const shownTarget = display && targetBudget > 0 ? targetText(display.target, limits, targetBudget) : "";
   const head = shownTarget ? ` ${shownTarget}` : "";
-  return { marker: "▸", action, rest: `${head}${outcome}${tail}${ending}`, ...(delta ? { change: { ...delta, offset: head.length } } : {}) };
+  return { marker: "▸", action, rest: `${head}${outcome}${tail}${ending}`,
+    ...(tail ? { intent: { offset: head.length + outcome.length, length: tail.length } } : {}),
+    ...(delta ? { change: { ...delta, offset: head.length } } : {}) };
 }
 
 export function runningLine(
@@ -265,6 +267,7 @@ export interface LineParts {
   readonly action: string;
   /** Everything after the action, leading space included (or "" / "…"). */
   readonly rest: string;
+  readonly intent?: Readonly<{ offset: number; length: number }>;
   readonly change?: CountedChange & { offset: number };
   readonly failure?: Readonly<{ count: number; offset: number }>;
 }

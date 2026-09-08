@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { isAbsolute, normalize, resolve } from "node:path";
 import { isRecord } from "./intent.js";
-import { Spacer, truncateToWidth, type Component } from "@earendil-works/pi-tui";
+import { Spacer, stripTerminalSequences, truncateToWidth, type Component } from "@earendil-works/pi-tui";
 import { classifyTool, type ToolGroupingRules, type ToolClassification } from "./classify.js";
 import { changeText, failureText, countResultLines, displayFor, runningLine, settledLine, DEFAULT_DISPLAY_LIMITS, type DisplayLimits, type LineParts } from "./display.js";
 import { intentFromArgs } from "./intent.js";
@@ -13,7 +13,7 @@ import { groupSummary, groupSummaryRequirements } from "./group-summary.js";
 
 export interface RowTheme {
   bold(text: string): string;
-  fg(style: "error" | "toolDiffAdded" | "toolDiffRemoved", text: string): string;
+  fg(style: "error" | "toolDiffAdded" | "toolDiffRemoved" | "thinkingText", text: string): string;
 }
 
 /** Structural boundary for the actual Pi instance, not a locally imported class. */
@@ -79,7 +79,7 @@ function readPathKey(tool: NativeToolComponent): string | undefined {
 }
 
 export function styleLine(theme: RowTheme, parts: LineParts, error = false): string {
-  let rest = parts.rest;
+  let rest = parts.intent ? parts.rest.slice(0, parts.intent.offset) : parts.rest;
   if (parts.change && !error) {
     const { offset } = parts.change;
     const original = ` ${changeText(parts.change)}`;
@@ -91,7 +91,12 @@ export function styleLine(theme: RowTheme, parts: LineParts, error = false): str
     rest = rest.slice(0, offset) + theme.fg("error", text) + rest.slice(offset + text.length);
   }
   const line = `${parts.marker} ${theme.bold(parts.action)}${rest}`;
-  return error ? theme.fg("error", line) : line;
+  const prefix = error ? theme.fg("error", line) : line;
+  if (!parts.intent) return prefix;
+  const { offset, length } = parts.intent;
+  const purpose = theme.fg("thinkingText", stripTerminalSequences(parts.rest.slice(offset, offset + length)));
+  const ending = parts.rest.slice(offset + length);
+  return prefix + purpose + (error && ending ? theme.fg("error", ending) : ending);
 }
 
 /** text is a getter so the delegate's content fingerprint observes partial updates. */

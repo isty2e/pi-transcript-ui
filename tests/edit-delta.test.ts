@@ -52,7 +52,7 @@ it("styles only the derived outcome, not identical text in arguments or intent",
   const shown = styleLine(theme, parts);
   expect(shown).toContain("(+2 -1).txt");
   expect(shown).toContain("keep (+2 -1)");
-  expect(theme.fg.mock.calls).toEqual([["toolDiffAdded", "+2"], ["toolDiffRemoved", "-1"]]);
+  expect(theme.fg.mock.calls).toEqual([["toolDiffAdded", "+2"], ["toolDiffRemoved", "-1"], ["thinkingText", " — keep (+2 -1)"]]);
   const error = settledLine({ toolName: "edit", display, content: [], isError: true, intent: undefined, layout: {}, metrics: { ...NO_SUMMARY_METRICS, patch: { kind: "known", value: { added: 2, removed: 1 } } } });
   expect(error.change).toBeUndefined();
 });

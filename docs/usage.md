@@ -47,6 +47,8 @@ Shortening does not change the path sent to the tool or Read file counts. Differ
 
 A short purpose may appear at the end of a row, after `—`. It is optional: the model may omit it when the command or path already explains the work. Missing purpose text does not produce a generic substitute and leaves more room for the description.
 
+The purpose and its preceding `—` use the theme's `thinkingText` color, the same token as thinking blocks. Their appearance follows the selected theme; command and status colors remain separate.
+
 Available purpose text is retained when the session is reloaded. See [intent settings](settings.md#intent) for language and length controls.
 
 ## Counts and status
