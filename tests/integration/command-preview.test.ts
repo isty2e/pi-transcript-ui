@@ -4,9 +4,13 @@ import { createBashToolDefinition, initTheme } from "@earendil-works/pi-coding-a
 import { attachTranscriptPresentation } from "../../src/wiring.js";
 import { nativeTool, nativeTranscript } from "./fixtures/native-components.js";
 
-it.each([false, true])("keeps complex command arguments and native expanded bodies unchanged (grouped=%s)", (grouped) => {
+it.each([
+  { grouped: false, multiline: false }, { grouped: true, multiline: false },
+  { grouped: false, multiline: true }, { grouped: true, multiline: true },
+])("keeps command arguments and native expanded bodies unchanged ($grouped, $multiline)", ({ grouped, multiline }) => {
   initTheme();
-  const command = `cd /Users/example/Desktop/git/pi-transcript-ui && git diff --check && test -z "$(git diff --cached --name-only)" && kata --project pi-transcript-ui close example --message '${"보고 기록 ".repeat(60)}'; if tmux has-session -t example 2>/dev/null; then echo yes; else echo no; fi`;
+  const command = multiline ? "set -euo pipefail\nnpm test\ngit diff --check"
+    : `cd /Users/example/Desktop/git/pi-transcript-ui && git diff --check && test -z "$(git diff --cached --name-only)" && kata --project pi-transcript-ui close example --message '${"보고 기록 ".repeat(60)}'; if tmux has-session -t example 2>/dev/null; then echo yes; else echo no; fi`;
   const args = Object.freeze({ command });
   const { root, chat } = nativeTranscript();
   const widths = [1, 12, 48, 80, 120, 180];
@@ -28,8 +32,13 @@ it.each([false, true])("keeps complex command arguments and native expanded bodi
       expect(rows.slice(0, prefix).every(row => visibleWidth(row) <= Math.min(width, 120))).toBe(true);
       if (width >= 120) {
         const summary = stripTerminalSequences(rows[prefix - 1]!);
-        for (const head of ["git diff", "test", "kata", "if […]"]) expect(summary).toContain(head);
-        expect(summary).toContain('test -z "$(…)"');
+        if (multiline) {
+          for (const head of ["set", "npm test", "git diff"]) expect(summary).toContain(head);
+          expect(summary.match(/↵/g)).toHaveLength(2);
+        } else {
+          for (const head of ["git diff", "test", "kata", "if […]"]) expect(summary).toContain(head);
+          expect(summary).toContain('test -z "$(…)"');
+        }
       }
       expect(Reflect.get(tool, "args")).toBe(args);
     }

@@ -2,7 +2,7 @@ import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 export type CommandPreviewMode = "compact" | "raw";
 
-type Operator = "|" | "&&" | "||" | ";";
+type Operator = "|" | "&&" | "||" | ";" | "\n";
 type Stage = { kind: "command"; before: Operator | undefined; words: string[] }
   | { kind: "tail"; before: Operator | undefined; source: string };
 const reserved = new Set(["if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done", "case", "esac", "select", "function", "time", "coproc", "!", "[[", "]]"]);
@@ -16,8 +16,9 @@ function substitutionEnd(source: string, start: number, depth = 1): number | und
   let quote: "'" | '"' | undefined, word = "";
   for (let i = start + 2; i < source.length; i++) {
     const char = source[i]!;
+    if (char === "\n") return undefined;
     if (char === "\\" && quote !== "'") {
-      if (i + 1 === source.length) return undefined;
+      if (i + 1 === source.length || source[i + 1] === "\n") return undefined;
       word += source.slice(i, i + 2); i++; continue;
     }
     if (quote === "'") { word += char; if (char === quote) quote = undefined; continue; }
@@ -42,7 +43,7 @@ function substitutionEnd(source: string, start: number, depth = 1): number | und
 
 /** Bounded Bash preview with a known prefix and, at most, one unparsed remainder. */
 function stages(command: string): Stage[] | undefined {
-  if (command.length > 16384 || /[\r\n\x00-\x08\x0b-\x1f\x7f]/.test(command)) return undefined;
+  if (command.length > 16384 || /[\r\x00-\x08\x0b-\x1f\x7f]/.test(command)) return undefined;
   const result: Stage[] = [];
   let words: string[] = [], word = "", before: Operator | undefined, start = 0;
   let quote: "'" | '"' | undefined, executable: string | undefined;
@@ -53,13 +54,26 @@ function stages(command: string): Stage[] | undefined {
       word = "";
     }
   };
-  const tail = (): Stage[] | undefined => result.length && result.length < 64
+  const tail = (): Stage[] | undefined => (result.length || command.includes("\n")) && result.length < 64
     ? [...result, { kind: "tail", before, source: command.slice(start).replace(/^[ \t]+/, "") }] : undefined;
   for (let i = 0; i < command.length; i++) {
     const char = command[i]!;
     if (char === "\\" && quote !== "'") {
       if (i + 1 === command.length) return tail();
+      if (command[i + 1] === "\n") { i++; continue; }
       word += char + command[++i]!; continue;
+    }
+    if (char === "\n") {
+      if (quote) return tail();
+      flush();
+      if (words.length > 256 || result.length >= 64) return undefined;
+      if (words.length) {
+        if (!executable || reserved.has(executable)) return tail();
+        result.push({ kind: "command", before, words });
+        words = []; executable = undefined; before = "\n";
+      }
+      start = i + 1;
+      continue;
     }
     if (quote === "'") { word += char; if (char === quote) quote = undefined; continue; }
     if (char === "`") return tail();
@@ -104,7 +118,7 @@ function stages(command: string): Stage[] | undefined {
   if (quote) return tail();
   flush();
   if (words.length > 256 || result.length >= 64) return undefined;
-  if (!words.length) return undefined;
+  if (!words.length) return command.includes("\n") && (before === "\n" || before === undefined) ? result : undefined;
   if (reserved.has(executable ?? "") || !executable) return tail();
   result.push({ kind: "command", before, words });
   return result;
@@ -128,7 +142,7 @@ function compactPath(token: string): string {
 
 function stageText(stage: Stage): { head: string; full: string } | undefined {
   if (stage.kind === "tail") {
-    const name = /^([A-Za-z_][A-Za-z0-9_.-]*)(?=[ \t]|$)/.exec(stage.source)?.[1];
+    const name = /^([A-Za-z_][A-Za-z0-9_.-]*)(?=[ \t\n]|$)/.exec(stage.source)?.[1];
     const text = name ? `${clip(name, 20)} […]` : "[…]";
     return { head: text, full: text };
   }
@@ -146,13 +160,19 @@ function stageText(stage: Stage): { head: string; full: string } | undefined {
 /** Compact prioritizes command heads; Raw retains the width-bounded first-line fallback. */
 export function commandPreview(command: string, width: number, shell: "bash" | "powershell" = "bash", mode: CommandPreviewMode = "compact"): string {
   const firstLine = command.slice(0, command.indexOf("\n") < 0 ? command.length : command.indexOf("\n")).replace(/[\r\t]/g, " ");
-  const fallback = () => clip(firstLine, width);
-  if (mode === "raw" || shell !== "bash" || visibleWidth(firstLine) <= width && !command.includes("\n")) return fallback();
+  const multiline = command.includes("\n");
+  const fallback = () => {
+    if (!multiline) return clip(firstLine, width);
+    const marker = " […]";
+    if (width <= visibleWidth(marker)) return clip(marker.trimStart(), width);
+    return clip(firstLine, width - visibleWidth(marker)) + marker;
+  };
+  if (mode === "raw" || shell !== "bash" || visibleWidth(firstLine) <= width && !multiline) return clip(firstLine, width);
   const parsed = stages(command);
   if (!parsed) return fallback();
   const descriptions = parsed.map(stageText);
   if (descriptions.some((value) => !value)) return fallback();
-  const parts = descriptions.map((value, i) => ({ ...value!, separator: i ? ` ${parsed[i]!.before} ` : "" }));
+  const parts = descriptions.map((value, i) => ({ ...value!, separator: i ? ` ${parsed[i]!.before === "\n" ? "↵" : parsed[i]!.before} ` : "" }));
   let count = parts.length;
   let marker = "";
   const minimum = (n: number) => parts.slice(0, n).reduce((sum, part) => sum + visibleWidth(part.separator) + Math.min(24, visibleWidth(part.head)), 0);

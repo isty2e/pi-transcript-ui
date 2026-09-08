@@ -31,13 +31,18 @@ it("keeps quoted and escaped operators inside their arguments", () => {
 
 it.each([
   "echo `date` && git status",
-  "cat <<EOF\nx\nEOF", "echo x & git status",
+  "echo x & git status",
   "if true; then echo x; fi", "echo x &&", "echo 'unclosed", "echo x;",
-  "echo x # comment && hidden", "(echo x) && git status", "echo x\n git status",
+  "echo x # comment && hidden", "(echo x) && git status",
   "echo x |& grep x", "echo x \\",
 ])("falls back without pretending to understand unsupported syntax: %s", (command) => {
   const first = command.split("\n")[0]!;
   expect(commandPreview(command, 12)).toBe(truncateToWidth(first, 12, "…"));
+});
+
+it("marks multiline omissions instead of silently showing only the first line", () => {
+  expect(commandPreview("cat <<EOF\nx\nEOF", 12)).toBe("cat […]");
+  expect(commandPreview("echo x\n git status", 12)).toBe("echo x [+1]");
 });
 
 it.each(["echo $(date) && git status", "echo $HOME && git status", 'echo "$HOME" && git status', "echo x > output && git status"])("keeps known omission counts for supported outer chains: %s", (command) => {

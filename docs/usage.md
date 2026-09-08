@@ -102,10 +102,19 @@ Bash summaries do not show output-line totals.
 
 ## Command previews
 
-In **Compact** mode, long Bash commands can keep several command names and separators visible instead of spending all the space on the first command's arguments.
+In **Compact** mode, long or multiline Bash commands can keep several command names and separators visible instead of spending all the space on the first command's arguments. Simple newline-separated commands use `↵`; newlines after `&&`, `||` or `|` retain that operator, and backslash-newline continuations outside single quotes do not create another command.
+
+For example, three lines containing `set -euo pipefail`, `npm test` and `git diff --check` can appear as:
+
+```text
+Run set -euo pipefail ↵ npm test ↵ git diff --check
+```
+
+Shell settings such as `set` are displayed as ordinary commands, not hidden or classified as setup.
 
 | Marker | Meaning |
 | --- | --- |
+| `↵` | A newline separating outer commands |
 | `…/name` | A slash-shaped argument was shortened |
 | `[env]` | Environment assignments were abbreviated |
 | `$(…)` | Command-substitution contents were omitted |
@@ -116,6 +125,8 @@ In **Compact** mode, long Bash commands can keep several command names and separ
 
 Slash-shaped arguments can be shortened even when they are not filesystem paths. A preview shows requested syntax, not which branches actually executed. It is not a copyable replacement command. Neither mode is secret redaction; sensitive argument values may remain visible.
 
-Unsupported initial syntax, multiline commands and commands too large to compact use a first-line preview instead. PowerShell always uses that first-line form.
+Compact does not fully parse shell scripts. Heredocs, quoted newlines and other unsupported syntax stop interpretation: earlier recognized commands remain visible, followed by an opaque remainder such as `python […]`. Body lines are not counted as outer commands. Unsupported initial single-line syntax and commands too large to compact use a first-line preview; multiline fallback also marks omitted content with `[…]`.
+
+PowerShell always uses the raw first-line form.
 
 Choose **Raw** in [command preview settings](settings.md#command-preview) to bypass compact transformations. Both modes obey the row and field width limits; neither changes execution or expanded output.

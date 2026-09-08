@@ -101,9 +101,9 @@ it("does not shorten URL-like, parent-relative or embedded prose fragments as pa
   }
 });
 
-it("retains raw fallback for multiline, unsupported initial syntax, and substitution-depth limits", () => {
+it("retains raw fallback for unsupported initial single-line syntax and substitution-depth limits", () => {
   const deep = 'echo ' + '$(echo '.repeat(9) + 'x' + ')'.repeat(9) + ' && git status';
-  for (const command of ['if true; then echo x; fi', 'cat <<EOF\nx\nEOF', deep]) {
+  for (const command of ['if true; then echo x; fi', deep]) {
     expect(commandPreview(command, 12)).toBe(truncateToWidth(command.split("\n")[0]!, 12, "…"));
   }
 });
