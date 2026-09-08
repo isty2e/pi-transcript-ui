@@ -18,13 +18,21 @@ Expand an individual call to see its original output. Read groups count files; m
 
 Requires [Pi](https://pi.dev) and Node.js 22.19 or newer. The extension has been checked with Pi 0.85.1; compatibility with other versions is not assured.
 
-Install the tagged release from GitHub:
+Install from npm (recommended):
 
 ```sh
-pi install git:github.com/isty2e/pi-transcript-ui@v0.1.0
+pi install npm:pi-transcript-ui
 ```
 
-This registers the extension in your Pi user configuration and pins it to this release. No separate npm package publication is required.
+This registers the extension in your Pi user configuration. To pin a specific version, use `pi install npm:pi-transcript-ui@0.2.1`.
+
+Alternatively, install the tagged release from GitHub:
+
+```sh
+pi install git:github.com/isty2e/pi-transcript-ui@v0.2.1
+```
+
+Choose one installation method to avoid loading duplicate copies. If switching from GitHub to npm, first remove the Git installation with `pi remove git:github.com/isty2e/pi-transcript-ui`.
 
 To use a local checkout instead, run `pi install /path/to/pi-transcript-ui`. Pi keeps a reference to that directory, so keep it in place while the extension is installed.
 
