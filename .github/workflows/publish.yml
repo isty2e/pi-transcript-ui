@@ -56,9 +56,13 @@ jobs:
           path: .ci/alternative-compositor
           persist-credentials: false
       - run: npm ci
+      - name: Isolate the compositor fixture from test discovery
+        run: |
+          mv .ci/alternative-compositor "$RUNNER_TEMP/alternative-compositor"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/alternative-compositor/node_modules"
       - run: npm test
         env:
-          PI_ALT_COMPOSITOR_SOURCE: ${{ github.workspace }}/.ci/alternative-compositor
+          PI_ALT_COMPOSITOR_SOURCE: ${{ runner.temp }}/alternative-compositor
       - name: Pack and inspect publication artifact
         id: package
         run: |
