@@ -29,13 +29,18 @@ it("preserves the actual occurrence behind duplicate text and distinguishes lite
   expect(long.spans!.length).toBeLessThan(10);
 });
 
-it("maps 400 projections to original native colors or the unchanged plain fallback", () => {
+it("maps projections to original native colors or the unchanged plain fallback", () => {
   const sources = [
     'echo "pwd" && pwd', 'X="pwd" pwd; echo "$HOME"', 'echo "$HOME"\npwd',
     'printf "%s" $(echo "$HOME")\npwd', 'pri\\\nntf "%s" "$HOME"\npwd',
     'echo "e\\\n\u0301"\npwd', 'echo "👩‍💻 한글 é"\npwd',
     'echo "[env] $(…) ↵ […]"\npwd', 'echo "first\npwd\nlast"\necho done',
     'python - <<\'PY\'\nprint("x")\nPY', 'echo hi\n# comment\npwd',
+    'cat <<\'EOF\' | grep bar\ngrep bar\npwd\nEOF\npwd',
+    'cat <<-"END-OF"\n\techo "pwd"\n\tEND-OF\npwd',
+    'cat <<EOF\npayload\\\nEOF\npwd\nEOF\npwd',
+    'cat <<A | cat <<B\nfirst\nA\nsecond\nB\necho "[…]"',
+    'cat <<A |\nbody\nA\npri\\\nntf "%s" "$HOME"',
     'echo "$HOME" &&\npwd', 'set -- foo bar\npwd', 'echo\t\t"  a\t b  "\npwd',
     'cmd /a/repeated/repeated/result.txt /b/repeated/repeated/result.txt',
     'echo "unterminated', 'pwd() { printf x; }', 'pwd long_argument',
@@ -71,7 +76,7 @@ it("maps 400 projections to original native colors or the unchanged plain fallba
 
 it("colors confirmed regions without interpreting opaque tails, including long clipped names", () => {
   const prefixes = ['set -e\ncd /tmp\n', 'echo "cd"\ncd /tmp\n', 'pri\\\nntf x\ncd /tmp\n'];
-  const tails = ["node <<'JS'\ncd fake\nJS\npwd", "very_long_opaque_program_name <<EOF\ncd fake\nEOF", 'echo "first\ncd\nlast"', 'for x in a; do cd /tmp; done', 'echo `pwd`', '# cd comment\npwd'];
+  const tails = ["node <<$'JS'\ncd fake\nJS\npwd", "very_long_opaque_program_name <<EOF\ncd fake", 'echo "first\ncd\nlast"', 'for x in a; do cd /tmp; done', 'echo `pwd`', '# cd comment\npwd'];
   for (const palette of ["dark", "light"]) {
     initTheme(palette);
     for (const prefix of prefixes) for (const tail of tails) {
@@ -154,7 +159,7 @@ it("declines opaque bodies, controls and over-budget input without invoking high
   const highlight = vi.fn(() => { throw new Error("must not be called"); });
   const colorizer = createCommandColorizer(highlight);
   try {
-    for (const source of ["python - <<'PY'\n" + 'print("hello")\n'.repeat(700) + "PY", 'echo "\x1b[31m"', 'echo ' + 'x'.repeat(16384)]) {
+    for (const source of ["python - <<$'PY'\n" + 'print("hello")\n'.repeat(700) + "PY", 'echo "\x1b[31m"', 'echo ' + 'x'.repeat(16384)]) {
       const raw = commandPreview(source, 80);
       expect(colorizer.format({ source, width: 80, offset: 0, length: raw.length }, raw, theme)).toBe(raw);
     }

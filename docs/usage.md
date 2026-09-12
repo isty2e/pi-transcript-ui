@@ -120,6 +120,7 @@ Shell settings such as `set` are displayed as ordinary commands, not hidden or c
 | `…/name` | A slash-shaped argument was shortened |
 | `[env]` | Environment assignments were abbreviated |
 | `$(…)` | Command-substitution contents were omitted |
+| `cat […]` | A confirmed heredoc was omitted, or the command has an unsupported remainder |
 | `if […]` | An unsupported remainder is shown without its details |
 | `[+N]` | Exactly N additional commands were omitted |
 | `[more]` | More syntax was omitted, but the full omitted command count is unknown |
@@ -129,7 +130,24 @@ Slash-shaped arguments can be shortened even when they are not filesystem paths.
 
 Compact Bash previews use Pi's syntax colors from the original command; generated markers use the theme's muted color. Coloring is best effort: retained text with verified original-source positions keeps its syntax colors, while opaque regions remain plain. Oversized or control-bearing commands and unsupported highlighting output can still leave the whole preview uncolored. Failed rows keep their error color. Raw and PowerShell previews are unchanged.
 
-Compact does not fully parse shell scripts. Heredocs, quoted newlines and other unsupported syntax stop interpretation: earlier recognized commands remain visible, followed by an opaque remainder such as `python […]`. Body lines are not counted as outer commands, and parsing does not resume after the opaque remainder. Unsupported initial single-line syntax and commands too large to compact use a first-line preview; multiline fallback also marks omitted content with `[…]`.
+Confirmed heredocs are omitted locally, so their surrounding commands remain visible. For example:
+
+```bash
+cd foo && python <<'PY' | grep -i "bar"
+print("bar")
+PY
+git status
+```
+
+With enough space, the preview is:
+
+```text
+Run cd foo && python […] | grep -i "bar" ↵ git status
+```
+
+Compact recognizes `<<` and `<<-` after a command name, with nonempty delimiter names made of letters `A–Z`/`a–z`, digits, `_`, `.`, `+` or `-`, either bare or entirely single- or double-quoted. Multiple heredocs are consumed in declaration order. Closing delimiters must occupy a whole logical line; `<<-` permits leading tabs, not spaces. For unquoted delimiters, backslash-newline continuations are joined before checking the closing delimiter. Body text and closing delimiters never count as outer commands. The preview does not evaluate body expansions.
+
+Compact does not fully parse shell scripts. Here-strings (`<<<`), heredocs inside command substitutions, redirections before the command name, other delimiter spellings, quoted newlines and other unsupported syntax remain out of scope. These cases, or an unconfirmed heredoc boundary, retain earlier recognized commands followed by one opaque remainder such as `python […]`; scanning does not resume beyond that remainder. This conservative boundary avoids presenting body text as commands. Unsupported initial single-line syntax and commands too large to compact use a first-line preview; multiline fallback also marks omitted content with `[…]`.
 
 PowerShell always uses the raw first-line form.
 
