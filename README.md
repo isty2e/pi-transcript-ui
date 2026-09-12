@@ -24,12 +24,12 @@ Install from npm (recommended):
 pi install npm:pi-transcript-ui
 ```
 
-This registers the extension in your Pi user configuration. To pin a specific version, use `pi install npm:pi-transcript-ui@0.2.1`.
+This registers the extension in your Pi user configuration. To pin a specific version, use `pi install npm:pi-transcript-ui@0.3.0`.
 
 Alternatively, install the tagged release from GitHub:
 
 ```sh
-pi install git:github.com/isty2e/pi-transcript-ui@v0.2.1
+pi install git:github.com/isty2e/pi-transcript-ui@v0.3.0
 ```
 
 Choose one installation method to avoid loading duplicate copies. If switching from GitHub to npm, first remove the Git installation with `pi remove git:github.com/isty2e/pi-transcript-ui`.
