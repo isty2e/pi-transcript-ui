@@ -92,6 +92,53 @@ function substitutionEnd(source: string, start: number, depth = 1): number | und
   return undefined;
 }
 
+interface Heredoc { delimiter: string; quoted: boolean; stripTabs: boolean }
+
+function heredocAt(source: string, start: number): { document: Heredoc; end: number } | undefined {
+  let i = start + 2;
+  const stripTabs = source[i] === "-";
+  if (stripTabs) i++;
+  while (source[i] === " " || source[i] === "\t") i++;
+
+  const quote = source[i] === "'" || source[i] === '"' ? source[i] : undefined;
+  if (quote) i++;
+  const wordStart = i;
+  while (i < source.length && /[A-Za-z0-9_.+-]/.test(source[i]!)) i++;
+  const delimiter = source.slice(wordStart, i);
+  if (!delimiter) return undefined;
+  if (quote) {
+    if (source[i] !== quote) return undefined;
+    i++;
+  }
+  if (i < source.length && !/[ \t\n;&|<>()]/.test(source[i]!)) return undefined;
+
+  return { document: { delimiter, quoted: quote !== undefined, stripTabs }, end: i };
+}
+
+function heredocEnd(source: string, start: number, document: Heredoc): number | undefined {
+  let line = "";
+  for (let i = start; i < source.length;) {
+    const newline = source.indexOf("\n", i);
+    const end = newline < 0 ? source.length : newline;
+    const part = source.slice(i, end);
+    i = newline < 0 ? end : end + 1;
+
+    // Bash joins unquoted backslash-newlines before checking the delimiter or stripping leading tabs.
+    let backslashes = 0;
+    if (!document.quoted && newline >= 0) {
+      for (let j = part.length - 1; j >= 0 && part[j] === "\\"; j--) backslashes++;
+    }
+    if (backslashes % 2) {
+      line += part.slice(0, -1);
+      continue;
+    }
+    line += part;
+    if ((document.stripTabs ? line.replace(/^\t+/, "") : line) === document.delimiter) return i;
+    line = "";
+  }
+  return undefined;
+}
+
 /** Bounded Bash preview with a known prefix and, at most, one unparsed remainder. */
 function stages(command: string, tracing: boolean): Stage[] | undefined {
   if (command.length > COMMAND_SOURCE_LIMIT || /[\r\x00-\x08\x0b-\x1f\x7f]/.test(command)) return undefined;
@@ -99,6 +146,7 @@ function stages(command: string, tracing: boolean): Stage[] | undefined {
   let words: CommandPreviewPlan[] = [], word = "", before: Before, start = 0;
   let wordSpans: PreviewSpan[] | undefined = tracing ? [] : undefined;
   let quote: "'" | '"' | undefined, executable: string | undefined;
+  let pending: { documents: Heredoc[]; count: number; before: Before; start: number } | undefined;
   const append = (text: string, origin: number | "marker") => {
     if (wordSpans) appendSpan(wordSpans, word.length, word.length + text.length, origin);
     word += text;
@@ -110,8 +158,12 @@ function stages(command: string, tracing: boolean): Stage[] | undefined {
       word = ""; wordSpans = tracing ? [] : undefined;
     }
   };
-  const tail = (): Stage[] | undefined => (result.length || command.includes("\n")) && result.length < 64
-    ? [...result, { kind: "tail", before, source: command.slice(start).replace(/^[ \t]+/, "") }] : undefined;
+  const tail = (): Stage[] | undefined => {
+    const checkpoint = pending ?? { count: result.length, before, start };
+    return (checkpoint.count || command.includes("\n")) && checkpoint.count < 64
+      ? [...result.slice(0, checkpoint.count), { kind: "tail", before: checkpoint.before,
+        source: command.slice(checkpoint.start).replace(/^[ \t]+/, "") }] : undefined;
+  };
   for (let i = 0; i < command.length; i++) {
     const char = command[i]!;
     if (char === "\\" && quote !== "'") {
@@ -128,6 +180,16 @@ function stages(command: string, tracing: boolean): Stage[] | undefined {
         result.push({ kind: "command", before, words });
         words = []; executable = undefined; before = { operator: "\n", start: i };
       }
+      if (pending) {
+        let bodyStart = i + 1;
+        for (const document of pending.documents) {
+          const end = heredocEnd(command, bodyStart, document);
+          if (end === undefined) return tail();
+          bodyStart = end;
+        }
+        i = bodyStart - 1;
+        pending = undefined;
+      }
       start = i + 1;
       continue;
     }
@@ -143,7 +205,24 @@ function stages(command: string, tracing: boolean): Stage[] | undefined {
     if (char === "'" || char === '"') { quote = char; append(char, i); continue; }
     if ("(){}".includes(char) || (char === "#" && !word)) return tail();
     if (char === "<" || char === ">") {
+      let nextIndex = i + 1;
+      while (command[nextIndex] === "\\" && command[nextIndex + 1] === "\n") nextIndex += 2;
+      if (char === "<" && nextIndex !== i + 1 && command[nextIndex] === "<") return tail();
+
       const next = command[i + 1];
+      if (char === "<" && next === "<" && command[i + 2] !== "<") {
+        const header = heredocAt(command, i);
+        if (!header) return tail();
+        if (!/^\d+$/.test(word)) flush();
+        if (!executable || reserved.has(executable)) return tail();
+        pending ??= { documents: [], count: result.length, before, start };
+        pending.documents.push(header.document);
+        word = ""; wordSpans = tracing ? [] : undefined;
+        words.push(literal("[…]", tracing, "marker"));
+        if (words.length > 256) return undefined;
+        i = header.end - 1;
+        continue;
+      }
       if (next === "(" || next === "&" || next === "|" || (char === "<" && (next === "<" || next === ">"))) return tail();
       if (!/^\d+$/.test(word)) flush();
       if (!executable) return tail();
@@ -172,7 +251,7 @@ function stages(command: string, tracing: boolean): Stage[] | undefined {
       words = []; executable = undefined; before = { operator, start: operatorStart }; start = i + 1;
     } else append(char, i);
   }
-  if (quote) return tail();
+  if (quote || pending) return tail();
   flush();
   if (words.length > 256 || result.length >= 64) return undefined;
   if (!words.length) return command.includes("\n") && (before?.operator === "\n" || before === undefined) ? result : undefined;

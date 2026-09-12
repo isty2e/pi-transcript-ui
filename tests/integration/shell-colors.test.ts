@@ -27,7 +27,7 @@ it.each([false, true].flatMap(grouped => ["running", "success", "error"].map(sta
     const referenceDetach = attachTranscriptPresentation(reference.root, { ...options, getTheme: plainTheme });
     const detach = attachTranscriptPresentation(trial.root, options);
     try {
-      for (const palette of ["dark", "light"]) for (const command of ['echo "$HOME"\npwd', 'echo "$PATH"\npwd', 'echo "👩‍💻 e\\\ń"\npwd', 'echo "$HOME"\ncd /tmp\nnode <<EOF\ncd fake\nEOF']) {
+      for (const palette of ["dark", "light"]) for (const command of ['echo "$HOME"\npwd', 'echo "$PATH"\npwd', 'echo "👩‍💻 e\\\ń"\npwd', 'echo "$HOME"\ncd /tmp\nnode <<EOF\ncd fake\nEOF', 'echo "$HOME"\nnode <<\'JS\' | grep bar\ncd fake\nJS\ngit status']) {
         initTheme(palette); args.command = command;
         for (const tool of [...reference.tools, ...trial.tools]) tool.updateArgs(args);
         for (const width of [1, 8, 24, 48, 120, 180]) for (const [i, tool] of trial.tools.entries()) {
@@ -37,6 +37,11 @@ it.each([false, true].flatMap(grouped => ["running", "success", "error"].map(sta
           expect(actual.slice(prefix)).toEqual(expected.slice(prefix));
           expect(actual.slice(0, prefix).every(line => visibleWidth(line) <= Math.min(width, 120))).toBe(true);
           expect(Reflect.get(tool, "args")).toBe(args);
+          if (width === 180 && command.includes("| grep bar")) {
+            const summary = stripTerminalSequences(actual[prefix - 1]!);
+            expect(summary).toContain("node […] | grep bar ↵ git status");
+            expect(summary).not.toContain("cd fake");
+          }
           if (state === "error") expect(actual).toEqual(expected);
           else if (width >= 120) expect(actual[prefix - 1]).toContain(theme.fg("syntaxType", "echo"));
         }

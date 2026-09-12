@@ -33,7 +33,7 @@ it.each([
   "echo 'payload\nhidden_command'\ngit status",
   'echo "payload\nhidden_command"\ngit status',
   "echo 'payload\\\nhidden_command'\ngit status",
-  "python - <<'PY'\nhidden_command()\nPY\ngit status",
+  "python - <<$'PY'\nhidden_command()\nPY\ngit status",
   "if true; then\nhidden_command\nfi\ngit status",
   "echo $(printf x\nhidden_command)\ngit status",
   "echo $(ca\\\nse x in x) echo hidden_command;; esac)\ngit status",
@@ -56,7 +56,7 @@ it("retains recognized heads when a comment stops interpretation", () => {
 });
 
 it("marks unknown omitted syntax without counting its body lines", () => {
-  const source = "npm test\ngit diff --check\npython - <<'PY'\nprint('body')\nPY";
+  const source = "npm test\ngit diff --check\npython - <<'PY'\nprint('body')";
   const previews = Array.from({ length: 121 }, (_, width) => commandPreview(source, width));
   expect(previews.some((preview) => preview.includes("[more]"))).toBe(true);
   for (const [width, preview] of previews.entries()) {
