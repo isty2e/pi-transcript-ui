@@ -92,7 +92,33 @@ Edit src/config.ts (+2 -1)
 
 Group change totals add the available per-call patch counts, including patches from writes. They are not the net change to the filesystem: editing the same line twice can count it twice. Full Write content sizes are never added to these patch totals.
 
-Mutation groups count calls, not unique files. A partial total such as `(partial 1/2: +2 -1)` means only one of two calls supplied a usable patch.
+Recognized edit/write/patch groups use `Editing` while running and `Edited` once all calls settle; failures are marked separately. Groups count calls, not unique files. A partial total such as `(partial 1/2: +2 -1)` means only one of two calls supplied a usable result patch.
+
+### Patch requests
+
+Compatible patch inputs are recognized by their declared fields and content, without a provider registry. One native call still owns its original result and expanded output.
+
+```text
+Patch src/config.ts (requested +2 -1)
+Patch old.ts → new.ts (requested +0 -0)
+Patch 2 targets (requested +3 -1)
+Patch old.ts (requested)
+Edited 2 calls (requested 3 targets: +3 -1)
+Patch src/config.ts — error (requested +2 -1)
+```
+
+**`requested` describes input, not confirmed filesystem changes.** Counts remain requests while running, after success or after failure; the native result determines the call's error marker. Context lines do not count as additions or removals. Deletions do not include the old contents, so a request containing a deletion omits the entire `+/-` total rather than reporting zero removed lines.
+
+A target is one requested file-operation entry. Repeated entries for the same path count separately; a move is one entry retaining both paths. Groups count native calls, not target entries. Patch-only groups can sum requested counts. Mixed edit/write/patch groups never add requested counts to applied-result totals; expand the members to see individual requests.
+
+Recognition covers bounded direct object schemas and either:
+
+- Exactly one required string field named `input`, `patch` or `patchText`, containing `*** Begin Patch` / `*** End Patch`, Add/Update/Delete File sections, and optional `*** Move to:` immediately after an Update header. Updates need nonempty `@@` hunks with explicit space, `+` or `-` prefixes; an optional `*** End of File` marker must end the update body.
+- Required string `type` and `path` fields plus a declared string `diff` field. `create_file` takes addition-prefixed text, `update_file` takes headerless `@@` hunks, and `delete_file` omits `diff`.
+
+LF and CRLF are accepted. Recognition is limited to 65,536 UTF-16 units per payload, 4,096 lines, 256 target entries and 4,096 units per path. Ambiguous fields, incomplete envelopes, unsupported syntax or schemas, control-bearing paths, ambiguous whitespace around envelope paths and oversized inputs use the existing fallback. A later argument update can establish or revoke recognition and regroup adjacent calls. Explicit grouping preferences still take precedence.
+
+This is not a patch-applicability validator or proof that the tool mutates files. Custom tools using the same shape for another purpose can override grouping in settings. Alternate Create/Edit envelope dialects, lenient unprefixed bodies, schema references/compositions, freeform transports, provider-specific applied receipts and phase outcomes are outside this support. No files are read to reconstruct missing counts.
 
 ### Failures and unavailable counts
 

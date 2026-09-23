@@ -1,4 +1,5 @@
 import type { ToolClassification } from "./classify.js";
+import type { PatchRequest } from "./patch-request.js";
 import { editDeltaFor, type EditDelta } from "./edit-delta.js";
 import { writtenLineCount, type FileMutation } from "./file-mutation.js";
 import { readBodyCount, type FileRead, type ReadBodyCount } from "./read-body.js";
@@ -6,6 +7,7 @@ import { readBodyCount, type FileRead, type ReadBodyCount } from "./read-body.js
 export interface FileCapabilities {
   readonly mutation: FileMutation | undefined;
   readonly read: FileRead | undefined;
+  readonly patch?: PatchRequest | undefined;
 }
 
 export type Measurement<T> =
@@ -44,7 +46,7 @@ interface MetricInput {
 /** Derive current evidence, never a cached copy of the native tool's lifecycle. */
 export function summaryMetrics(input: MetricInput): SummaryMetrics {
   const { toolName, classification, capabilities, args, result, isPartial } = input;
-  const readApplicable = !capabilities.mutation &&
+  const readApplicable = !capabilities.mutation && !capabilities.patch &&
     (capabilities.read !== undefined || toolName === "read" || classification.operation === "read");
   const writeApplicable = capabilities.mutation?.shape === "content";
 

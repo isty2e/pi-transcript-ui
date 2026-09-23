@@ -8,6 +8,7 @@ import type { EditDelta } from "./edit-delta.js";
 import { fileMutationPath, type FileMutation } from "./file-mutation.js";
 import { commandPreview, type CommandPreviewMode } from "./command-preview.js";
 import { pathPreview } from "./path-preview.js";
+import type { PatchRequest } from "./patch-request.js";
 
 export interface CommandSpan {
   readonly source: string;
@@ -31,7 +32,8 @@ export interface RowLayout {
 export type DisplayTarget =
   | Readonly<{ kind: "path"; path: string }>
   | Readonly<{ kind: "query"; query: string }>
-  | Readonly<{ kind: "command"; command: string; shell?: "powershell" }>;
+  | Readonly<{ kind: "command"; command: string; shell?: "powershell" }>
+  | Readonly<{ kind: "patch-request"; request: PatchRequest }>;
 
 export interface ToolDisplay {
   readonly action: string;
@@ -100,17 +102,18 @@ function lsDisplay(args: unknown): ToolDisplay | null {
 }
 
 /**
- * Derive file-mutation display from capability, otherwise legacy built-in display.
+ * Prefer recognized file and patch inputs, otherwise legacy built-in display.
  * Returns null on argument mismatch; the caller renders the
  * safe generic line instead. Never throws.
  */
-export function displayFor(toolName: unknown, args: unknown, capability?: FileMutation, reader?: FileRead): ToolDisplay | null {
+export function displayFor(toolName: unknown, args: unknown, capability?: FileMutation, reader?: FileRead, patch?: PatchRequest): ToolDisplay | null {
   try {
     if (capability) {
       const path = fileMutationPath(capability, args);
       return path === undefined ? null : { action: capability.action, target: { kind: "path", path: compactHome(path) } };
     }
     if (reader) return readDisplay(args);
+    if (patch) return { action: "Patch", target: { kind: "patch-request", request: patch } };
     switch (toolName) {
       case "read":
         return readDisplay(args);
@@ -137,6 +140,15 @@ export function targetText(target: DisplayTarget, limits: Readonly<Partial<Displ
   switch (target.kind) {
     case "path":
       return pathPreview(target.path, Math.min(MAX_TARGET_WIDTH, width));
+    case "patch-request": {
+      const { targets } = target.request;
+      if (targets.length !== 1) return clip(`${targets.length} targets`, width);
+      const entry = targets[0]!;
+      const available = Math.min(MAX_TARGET_WIDTH, width);
+      if (entry.kind !== "update" || entry.moveTo === undefined) return pathPreview(compactHome(entry.path), available);
+      const half = Math.max(0, Math.floor((available - 3) / 2));
+      return clip(`${pathPreview(compactHome(entry.path), half)} → ${pathPreview(compactHome(entry.moveTo), half)}`, available);
+    }
     case "query":
       return clip(`"${clip(target.query, MAX_TARGET_WIDTH)}"`, width);
     case "command":
@@ -216,7 +228,8 @@ export function runningLine(
   intent?: string | null,
   layout: RowLayout = {},
 ): LineParts {
-  return summaryParts(toolName, display, "", true, intent, layout);
+  const outcome = display?.target.kind === "patch-request" ? ` ${requestedPatchText(display.target.request.delta)}` : "";
+  return summaryParts(toolName, display, outcome, true, intent, layout);
 }
 
 export interface SettledLineInput {
@@ -232,6 +245,10 @@ export interface SettledLineInput {
 export function settledLine({
   toolName, display, content, isError, intent, layout = {}, metrics,
 }: SettledLineInput): LineParts {
+  if (display?.target.kind === "patch-request") {
+    const outcome = `${isError ? " — error" : ""} ${requestedPatchText(display.target.request.delta)}`;
+    return summaryParts(toolName, display, outcome, false, intent, layout);
+  }
   if (metrics.read.kind !== "not-applicable") {
     const outcome = isError ? "— error" : metrics.read.kind === "known"
       ? `(${pluralLines(metrics.read.value.lines)})` : "(lines unknown)";
@@ -264,6 +281,12 @@ export type CountedChange = EditDelta & (
 );
 
 export function failureText(count: number): string { return `${count} failed`; }
+
+export function requestedPatchText(delta: EditDelta | undefined, targets?: number): string {
+  const count = targets === undefined ? "" : ` ${targets} ${targets === 1 ? "target" : "targets"}`;
+  const changes = delta ? `${count ? ":" : ""} +${delta.added} -${delta.removed}` : "";
+  return `(requested${count}${changes})`;
+}
 
 export function changeText(change: CountedChange, format: (kind: "toolDiffAdded" | "toolDiffRemoved", text: string) => string = (_kind, text) => text): string {
   const coverage = change.counted !== undefined && change.counted !== change.total ? `partial ${change.counted}/${change.total}: ` : "";

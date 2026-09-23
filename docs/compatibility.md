@@ -28,7 +28,7 @@ Mouse behavior can also depend on the terminal. These modes do not establish sup
 
 ## Tool and provider support
 
-Built-in, custom and MCP tools can receive compact summaries. Recognition of file operations depends on the tool's declared inputs, not just its name. Unrecognized custom tools may use generic labels or omit file counts.
+Built-in, custom and MCP tools can receive compact summaries. Recognition of file operations depends on the tool's declared inputs, not just its name. Unrecognized custom tools may use generic labels or omit file counts. [Patch request summaries](usage.md#patch-requests) additionally inspect a bounded content format; matching fields do not establish what was actually applied.
 
 Purpose text depends on the model, provider and tool supporting the intent request. It is discretionary even when supported. A missing purpose is not itself an error; the command or path can still be shown.
 
@@ -64,7 +64,7 @@ Switching to Raw stops compact transformations; it does not remove width limits.
 
 ### A count or purpose is missing
 
-Purpose text is optional. Counts require usable evidence from a finished call; an image, incomplete output or unsupported tool may have no count. Missing counts do not mean zero. See [counts and status](usage.md#counts-and-status).
+Purpose text is optional. Result counts require usable evidence from a finished call; an image, incomplete output or unsupported tool may have no count. Patch counts labeled `requested` describe the input and may appear before execution finishes. Missing counts do not mean zero. See [counts and status](usage.md#counts-and-status).
 
 ### Settings cannot be loaded or saved
 
