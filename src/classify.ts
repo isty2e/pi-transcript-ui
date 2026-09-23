@@ -4,7 +4,7 @@
  * Decision table (ported semantics from pi-transcript-ui G2, re-expressed
  * over Pi-native inputs instead of projection nodes):
  * - read/grep/find/ls → exploration (read/search/list)
- * - schema-proven file mutation → mutation (mutate)
+ * - schema-proven file mutation or recognized patch request → mutation (mutate)
  * - otherwise bash and unknown tools → standalone
  * - exact-name user rules supersede capability and built-ins (read/search/list go to
  *   exploration, mutation goes to mutation, standalone forces standalone)
@@ -16,12 +16,13 @@
  */
 
 import type { FileMutation } from "./file-mutation.js";
+import type { PatchRequest } from "./patch-request.js";
 
 export type OperationKind = "read" | "search" | "list" | "mutate" | "execute" | "unknown";
 
 export type ToolFamily = "exploration" | "mutation" | null;
 
-export type GroupingEvidence = "built-in-read" | "file-mutation-schema" | "user-configured" | "none";
+export type GroupingEvidence = "built-in-read" | "file-mutation-schema" | "patch-request" | "user-configured" | "none";
 
 export interface ToolClassification {
   readonly family: ToolFamily;
@@ -101,18 +102,18 @@ function builtIn(toolName: string): ToolClassification {
 
 /**
  * Exact preferences precede schema capability, then legacy exploration names.
- * Never throws; never reads arguments, results,
- * or execution status (status is orthogonal to grouping evidence).
+ * Consumes canonical capabilities, never raw arguments, results or execution status.
+ * Patch recognition belongs to its input boundary, not grouping.
  */
 export function classifyTool(
   toolName: unknown,
   rules: ToolGroupingRules | null | undefined = null,
-  capability?: FileMutation,
+  capability?: FileMutation | PatchRequest,
 ): ToolClassification {
   if (typeof toolName !== "string" || toolName.length === 0 || toolName.length > MAX_TOOL_NAME_LENGTH) {
     return standalone("unknown");
   }
   return configured(rules, toolName) ?? (capability
-    ? Object.freeze({ family: "mutation", evidence: "file-mutation-schema", operation: "mutate" })
+    ? Object.freeze({ family: "mutation", evidence: "targets" in capability ? "patch-request" : "file-mutation-schema", operation: "mutate" })
     : builtIn(toolName));
 }

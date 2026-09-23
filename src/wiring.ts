@@ -8,6 +8,7 @@ import { intentFromArgs } from "./intent.js";
 import type { DisclosureTarget } from "./navigation.js";
 import { fileReadFor } from "./read-body.js";
 import { fileMutationFor } from "./file-mutation.js";
+import { createPatchRequestParser } from "./patch-request.js";
 import { summaryMetrics, type FileCapabilities } from "./tool-metrics.js";
 import { groupSummary, groupSummaryRequirements } from "./group-summary.js";
 import { createCommandColorizer } from "./shell-colors.js";
@@ -188,7 +189,7 @@ export interface PresentationAttachment {
 }
 
 /** Scoped native-tree access leaves Pi's state, definition, shell and lifecycle authoritative. */
-function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null, options: PresentationOptions, capabilities: FileCapabilities, classification: ToolClassification) {
+function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null, options: PresentationOptions, capabilities: FileCapabilities, classification: ToolClassification, onUpdate?: () => void) {
   let group = initialGroup;
   const capability = capabilities.mutation;
   const childrenDescriptor = Object.getOwnPropertyDescriptor(tool, "children");
@@ -230,7 +231,7 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
   const row = new SummaryRow((width) => {
     const indent = group && group.members.length > 1 ? "  " : "";
     const layout = { limits: options.displayLimits ?? DEFAULT_DISPLAY_LIMITS, ...(width === undefined ? {} : { width: Math.max(0, width - indent.length) }) };
-    const display = displayFor(tool.toolName, tool.args, capability, capabilities.read);
+    const display = displayFor(tool.toolName, tool.args, capability, capabilities.read, capabilities.patch);
     const intent = options.resolveIntent ? options.resolveIntent(tool.toolCallId, tool.args) : intentFromArgs(tool.args);
     const parts = tool.result && !tool.isPartial
       ? settledLine({ toolName: tool.toolName, display, content: tool.result.content,
@@ -274,7 +275,10 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
     if (!active || nativeDepth > 0) return native(() => originalRender.call(tool, width));
     return projectedChildren().flatMap((child) => child.render(width));
   };
-  const update = () => native(() => originalUpdate.call(tool));
+  const update = () => {
+    native(() => originalUpdate.call(tool));
+    if (active && nativeDepth === 0) onUpdate?.();
+  };
   const invalidate = () => native(() => originalInvalidate.call(tool));
   const mouse: NonNullable<Component["handleMouse"]> = (event) => {
     if (!active || nativeDepth > 0) return native(() => originalMouse?.call(tool, event));
@@ -310,7 +314,8 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
   tool.invalidate = invalidate;
   tool.handleMouse = mouse;
   tool.setExpanded = setExpanded;
-  return { target, get group() { return group; }, setGroup(next: ToolGroup | null) { group = next; }, release: () => {
+  return { target, get group() { return group; }, setGroup(next: ToolGroup | null) { group = next; },
+    setClassification(next: ToolClassification) { classification = next; }, release: () => {
     active = false;
     colorizer?.clear();
     for (const [key, replacement] of [["render", render], ["updateDisplay", update], ["invalidate", invalidate], ["handleMouse", mouse], ["setExpanded", setExpanded], ["addChild", add], ["removeChild", remove], ["clear", clear]] as const) {
@@ -382,20 +387,33 @@ export function attachTranscriptPresentation(root: { children: Component[] }, op
       return;
     }
     let capability: FileCapabilities = { mutation: undefined, read: undefined };
+    let parsePatch: ReturnType<typeof createPatchRequestParser>;
     try {
       const parameters = child.toolDefinition?.parameters;
-      capability = { mutation: fileMutationFor(parameters), read: fileReadFor(parameters) };
+      const mutation = fileMutationFor(parameters), read = fileReadFor(parameters);
+      parsePatch = !mutation && !read ? createPatchRequestParser(parameters) : undefined;
+      capability = { mutation, read, get patch() { return parsePatch?.(child.args); } };
     } catch {
       // Opaque definitions retain native fallback.
     }
-    const classification = classifyTool(child.toolName, options.rules, capability.mutation);
+    const classify = () => classifyTool(child.toolName, options.rules, capability.mutation ?? capability.patch);
+    const refresh = () => {
+      const previous = classifications.get(child);
+      if (!active || !previous) return;
+      const next = classify();
+      if (previous.family === next.family && previous.operation === next.operation && previous.evidence === next.evidence) return;
+      classifications.set(child, next);
+      decorations.get(child)?.setClassification(next);
+      reconcile();
+    };
+    const classification = classify();
     if (classification.family === null) run = null;
     else if (run === null || run.classification.family !== classification.family) {
       run = new ToolGroup(groupId++, classification, (tool) => capabilities.get(tool), options.getTheme, options.requestRender, options.displayLimits?.rowMaxWidth);
     }
     const group = run;
     let decorated: ReturnType<typeof decorateTool>;
-    try { decorated = decorateTool(child, group, options, capability, classification); }
+    try { decorated = decorateTool(child, group, options, capability, classification, parsePatch ? refresh : undefined); }
     catch (error) {
       run = null;
       options.onUnsupported?.(child.toolName, error);
@@ -406,6 +424,7 @@ export function attachTranscriptPresentation(root: { children: Component[] }, op
     decorations.set(child, decorated);
     classifications.set(child, classification);
     releases.set(child, () => {
+      parsePatch = undefined;
       decorations.delete(child);
       classifications.delete(child);
       decorated.release();
@@ -414,6 +433,8 @@ export function attachTranscriptPresentation(root: { children: Component[] }, op
     });
   };
   const reconcile = () => {
+    const visibleExpanded = new Set([...decorations].filter(([tool, { group }]) =>
+      tool.expanded && (!group || group.members.length < 2 || group.expanded)).map(([tool]) => tool));
     const previous = new Map([...decorations].map(([tool, binding]) => [tool, binding.group]));
     const oldGroups = new Set(previous.values());
     for (const group of oldGroups) group?.resetMembers();
@@ -429,12 +450,13 @@ export function attachTranscriptPresentation(root: { children: Component[] }, op
       const old = previous.get(child);
       if (classification.family === null) run = null;
       else if (!run || run.classification.family !== classification.family) {
-        run = old && !used.has(old) ? old : new ToolGroup(groupId++, classification, (tool) => capabilities.get(tool), options.getTheme, options.requestRender, options.displayLimits?.rowMaxWidth);
+        run = old && !used.has(old) && old.classification.family === classification.family ? old
+          : new ToolGroup(groupId++, classification, (tool) => capabilities.get(tool), options.getTheme, options.requestRender, options.displayLimits?.rowMaxWidth);
         used.add(run);
       }
       if (run && old) run.inheritExpansion(old);
       binding.setGroup(run);
-      run?.addMember(child, classification, false);
+      run?.addMember(child, classification, visibleExpanded.has(child));
     }
     options.requestRender();
   };

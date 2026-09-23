@@ -1,5 +1,5 @@
 import type { ToolClassification } from "./classify.js";
-import { changeText, failureText, type LineParts } from "./display.js";
+import { changeText, failureText, requestedPatchText, type LineParts } from "./display.js";
 import { readCountText } from "./read-body.js";
 import type { FileCapabilities, SummaryMetrics } from "./tool-metrics.js";
 
@@ -35,12 +35,12 @@ const verbs = {
 
 function groupOperation({ classification, members }: GroupSelectionInput) {
   if (classification.family === "mutation") {
-    return members.every(member => member.capabilities.mutation) ? "mutate" : "change";
+    return members.every(member => member.capabilities.mutation || member.capabilities.patch) ? "mutate" : "change";
   }
 
   const operations = new Set(members.map(member => member.classification.operation));
   const first = members[0]?.classification.operation;
-  if (members.some(member => member.capabilities.mutation) || operations.size !== 1 || first === "unknown") {
+  if (members.some(member => member.capabilities.mutation || member.capabilities.patch) || operations.size !== 1 || first === "unknown") {
     return "explore";
   }
   return first;
@@ -51,7 +51,7 @@ function selectSummary(input: GroupSelectionInput) {
   const done = members.every(member => member.settled);
   const operation = groupOperation(input);
   const readGroup = operation === "read" || members.some(member =>
-    member.capabilities.read || (!member.capabilities.mutation && member.classification.operation === "read"));
+    member.capabilities.read || (!member.capabilities.mutation && !member.capabilities.patch && member.classification.operation === "read"));
 
   let verb: readonly [string, string, string];
   if (readGroup && classification.family === "exploration") {
@@ -61,7 +61,7 @@ function selectSummary(input: GroupSelectionInput) {
   }
 
   const countOutput = !readGroup && classification.family !== "mutation" && done &&
-    !members.some(member => member.toolName === "bash" || member.capabilities.mutation || member.metrics.patch.kind === "known");
+    !members.some(member => member.toolName === "bash" || member.capabilities.mutation || member.capabilities.patch || member.metrics.patch.kind === "known");
   return { done, verb, readGroup, countOutput };
 }
 
@@ -82,6 +82,20 @@ export function groupSummary(input: GroupSummaryInput): LineParts {
   const failed = members.filter(member => member.settled && member.isError).length;
   const failure = failed ? { count: failed, offset: ` ${quantity} — `.length } : undefined;
   const prefix = ` ${quantity}${failed ? ` — ${failureText(failed)}` : ""}`;
+
+  const requests = members.map(member => member.capabilities.patch);
+  if (requests.length && requests.every(request => request !== undefined)) {
+    const targets = requests.reduce((total, request) => total + request.targets.length, 0);
+    const delta = requests.every(request => request.delta !== undefined) ? requests.reduce((total, request) => ({
+      added: total.added + request.delta!.added, removed: total.removed + request.delta!.removed,
+    }), { added: 0, removed: 0 }) : undefined;
+    return {
+      marker: expanded ? "▾" : "▸",
+      action: done ? verb[1] : verb[0],
+      rest: `${prefix} ${requestedPatchText(delta, targets)}${done ? "" : "…"}`,
+      ...(failure ? { failure } : {}),
+    };
+  }
 
   let added = 0;
   let removed = 0;
