@@ -34,7 +34,8 @@
     "@types/node": "^26.4.1",
     "pi-structured-prompt-fixture": "npm:@earendil-works/pi-coding-agent@0.99.1",
     "typescript": "^5.9.3",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "yaml": "2.9.0"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

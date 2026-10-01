@@ -123,9 +123,35 @@ jobs:
           assert.equal(actual, process.env.PACKAGE_INTEGRITY);
           JS
           npm publish "$RUNNER_TEMP/npm-package/pi-transcript-ui-$PACKAGE_VERSION.tgz" --access public --registry=https://registry.npmjs.org/ --ignore-scripts
-          npm view "pi-transcript-ui@$PACKAGE_VERSION" dist.integrity --json --registry=https://registry.npmjs.org/ > "$RUNNER_TEMP/npm-published.json"
+      - name: Verify registry publication
+        env:
+          PACKAGE_VERSION: ${{ needs.verify.outputs.version }}
+          PACKAGE_INTEGRITY: ${{ needs.verify.outputs.integrity }}
+        run: |
           node --input-type=module <<'JS'
           import assert from 'node:assert/strict';
-          import { readFileSync } from 'node:fs';
-          assert.equal(JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/npm-published.json`, 'utf8')), process.env.PACKAGE_INTEGRITY);
+          import { execFileSync } from 'node:child_process';
+          import { setTimeout } from 'node:timers/promises';
+          const specifier = `pi-transcript-ui@${process.env.PACKAGE_VERSION}`;
+          const attempts = 12;
+          let verified = false;
+          for (let attempt = 1; attempt <= attempts; attempt++) {
+            let integrity;
+            try {
+              integrity = JSON.parse(execFileSync('npm', [
+                'view', specifier, 'dist.integrity', '--json', '--registry=https://registry.npmjs.org/',
+                '--fetch-retries=0', '--fetch-timeout=15000',
+              ], { encoding: 'utf8', timeout: 20000, killSignal: 'SIGKILL', stdio: ['ignore', 'pipe', 'pipe'] }));
+            } catch (error) {
+              console.warn(`Registry lookup ${attempt}/${attempts} failed (${error.code ?? error.status ?? 'invalid response'})`);
+            }
+            if (typeof integrity === 'string') {
+              assert.equal(integrity, process.env.PACKAGE_INTEGRITY, 'Published integrity differs from the tested artifact');
+              verified = true;
+              break;
+            }
+            if (attempt < attempts) await setTimeout(15000);
+          }
+          assert(verified, `${specifier} could not be verified after ${attempts} attempts; publication was not retried`);
+          console.log(`Verified published integrity for ${specifier}`);
           JS
