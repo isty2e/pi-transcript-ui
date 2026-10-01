@@ -91,7 +91,7 @@ jobs:
     needs: verify
     if: github.event_name == 'release' && !github.event.release.prerelease && github.repository == 'isty2e/pi-transcript-ui'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     permissions:
       contents: read
       id-token: write
@@ -133,7 +133,8 @@ jobs:
           import { execFileSync } from 'node:child_process';
           import { setTimeout } from 'node:timers/promises';
           const specifier = `pi-transcript-ui@${process.env.PACKAGE_VERSION}`;
-          const attempts = 12;
+          // Longer registry delays remain a verification failure; this is not an availability guarantee.
+          const attempts = 21;
           let verified = false;
           for (let attempt = 1; attempt <= attempts; attempt++) {
             let integrity;
@@ -150,7 +151,7 @@ jobs:
               verified = true;
               break;
             }
-            if (attempt < attempts) await setTimeout(15000);
+            if (attempt < attempts) await setTimeout(30000);
           }
           assert(verified, `${specifier} could not be verified after ${attempts} attempts; publication was not retried`);
           console.log(`Verified published integrity for ${specifier}`);
