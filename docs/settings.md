@@ -38,7 +38,7 @@ Intent is the optional purpose text at the end of a summary.
 | Intent language | `intent.language` | `auto` | `auto`, `en`, `zh-CN` |
 | Intent generation length | `intent.maxLength` | 48 | Integer, clamped to 16–256 Unicode code points |
 
-Turning intent off stops requesting purpose text and hides it in summaries. It does not delete saved session history.
+Turning intent off stops requesting purpose text and hides it in summaries. It does not delete saved session history. See [intent prompt composition](compatibility.md#intent-prompt-composition) for interaction with other extensions' prompt changes.
 
 `auto` asks for the user's language; `en` asks for English and `zh-CN` for Simplified Chinese. These settings guide the model; they do not require every call to include a purpose or translate previously saved text.
 

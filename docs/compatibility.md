@@ -36,6 +36,14 @@ Unsupported UI components keep native presentation and produce a diagnostic rath
 
 Summaries do not replace tool execution, permissions or expanded output. Command previews and line counts are not a security review, an execution trace or a complete filesystem diff.
 
+## Intent prompt composition
+
+On Pi hosts with structured system prompts, intent guidance uses the `pi_transcript_ui_intent` section. Other extensions can contribute sections before or after this hook. Turning intent off removes only this extension's section on the next prompt; changing its language replaces the section rather than appending another copy. Pi 0.85.1 lacks structured sections and retains the string-append path.
+
+On structured hosts, an explicit full-prompt override from another extension remains authoritative. This extension does not clear or rewrite that override to insert intent guidance, so the guidance may be absent. Composing sections into another extension's opaque override is unsupported; it requires cooperation from the override's owner.
+
+Prompt composition is tested separately on Pi 0.99.1. This does not establish compatibility of the entire UI with that version.
+
 ## Troubleshooting
 
 ### The commands are missing

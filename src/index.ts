@@ -3,7 +3,7 @@ import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { attachTranscriptPresentation, type PresentationAttachment } from "./wiring.js";
 import { ToolNavigation, navigationComponent } from "./navigation.js";
-import { intentGuideline } from "./intent.js";
+import { intentGuideline, isRecord } from "./intent.js";
 import { INTENT_ENTRY, IntentTransport } from "./intent-transport.js";
 import { defaultSettings, groupingRules, SettingsFile } from "./settings.js";
 import { editSettings } from "./settings-ui.js";
@@ -11,6 +11,7 @@ import packageMetadata from "../package.json" with { type: "json" };
 
 export const TRANSCRIPT_UI_VERSION = packageMetadata.version;
 const WIDGET_KEY = "pi-transcript-ui-attachment";
+const INTENT_PROMPT_SECTION = "pi_transcript_ui_intent";
 const COMPOSITOR_ACTIVE = Symbol.for("pi-fixed-editor-compositor.alternateScreenActive");
 function notify(ctx: ExtensionContext, message: string, level: "info" | "warning" | "error"): void {
   if (ctx.hasUI) ctx.ui.notify(message, level);
@@ -84,9 +85,18 @@ export default function transcriptUi(pi: ExtensionAPI): void {
     detach?.(); detach = undefined; reconfigure = undefined;
     if (ctx.mode === "tui") ctx.ui.setWidget(WIDGET_KEY, undefined);
   });
-  pi.on("before_agent_start", (event) => settings.intent.enabled ? {
-    systemPrompt: `${event.systemPrompt}\n\n${intentGuideline(settings.intent.language)}`,
-  } : undefined);
+  pi.on("before_agent_start", (event) => {
+    const options = event.systemPromptOptions;
+    if (options && "sections" in options && isRecord(options.sections)) {
+      if (settings.intent.enabled) options.sections[INTENT_PROMPT_SECTION] = intentGuideline(settings.intent.language);
+      else delete options.sections[INTENT_PROMPT_SECTION];
+      return;
+    }
+
+    if (settings.intent.enabled) return {
+      systemPrompt: `${event.systemPrompt}\n\n${intentGuideline(settings.intent.language)}`,
+    };
+  });
   pi.on("before_provider_request", (event, ctx) => {
     const active = new Set(pi.getActiveTools());
     return intents.preparePayload(event.payload, pi.getAllTools().filter((tool) => active.has(tool.name)), settings.intent, (message) => {
