@@ -3,7 +3,7 @@ import { isAbsolute, normalize, resolve } from "node:path";
 import { isRecord } from "./intent.js";
 import { Spacer, stripTerminalSequences, truncateToWidth, type Component } from "@earendil-works/pi-tui";
 import { classifyTool, type ToolGroupingRules, type ToolClassification } from "./classify.js";
-import { changeText, failureText, countResultLines, displayFor, runningLine, settledLine, DEFAULT_DISPLAY_LIMITS, type DisplayLimits, type LineParts, type CommandSpan } from "./display.js";
+import { changeText, failureText, countResultLines, codemodeLine, displayFor, runningLine, settledLine, DEFAULT_DISPLAY_LIMITS, type DisplayLimits, type LineParts, type CommandSpan } from "./display.js";
 import { intentFromArgs } from "./intent.js";
 import type { DisclosureTarget } from "./navigation.js";
 import { fileReadFor } from "./read-body.js";
@@ -12,6 +12,7 @@ import { createPatchRequestParser } from "./patch-request.js";
 import { summaryMetrics, type FileCapabilities } from "./tool-metrics.js";
 import { groupSummary, groupSummaryRequirements } from "./group-summary.js";
 import { createCommandColorizer } from "./shell-colors.js";
+import { codemodeSummary } from "./codemode-summary.js";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 
 export interface RowTheme {
@@ -28,7 +29,7 @@ export interface NativeToolComponent extends Component {
   args: unknown;
   cwd?: string;
   toolDefinition?: { parameters?: unknown };
-  result?: { content?: unknown; isError?: boolean };
+  result?: { content?: unknown; isError?: boolean; details?: unknown; durationMs?: unknown };
   expanded: boolean;
   isPartial: boolean;
   updateDisplay(): void;
@@ -233,7 +234,10 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
     const layout = { limits: options.displayLimits ?? DEFAULT_DISPLAY_LIMITS, ...(width === undefined ? {} : { width: Math.max(0, width - indent.length) }) };
     const display = displayFor(tool.toolName, tool.args, capability, capabilities.read, capabilities.patch);
     const intent = options.resolveIntent ? options.resolveIntent(tool.toolCallId, tool.args) : intentFromArgs(tool.args);
-    const parts = tool.result && !tool.isPartial
+    const code = display === null ? codemodeSummary({ toolName: tool.toolName, args: tool.args,
+      result: tool.result, isPartial: !tool.result || tool.isPartial }) : undefined;
+    const parts = code ? codemodeLine({ summary: code, isError: tool.result?.isError === true, intent, layout })
+      : tool.result && !tool.isPartial
       ? settledLine({ toolName: tool.toolName, display, content: tool.result.content,
         isError: tool.result.isError === true, intent, layout,
         metrics: summaryMetrics({ toolName: tool.toolName, args: tool.args, result: tool.result,

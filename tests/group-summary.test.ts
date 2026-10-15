@@ -63,3 +63,20 @@ it("requests native path identity only for Read labels and output counts only fo
   expect(groupSummaryRequirements({ ...input, members: [search, bash] })).toEqual({ readIdentity: false, outputLines: false });
   expect(joinLine(summarize([search, bash]))).toBe("▸ Searched 2 patterns");
 });
+
+it("omits the whole output-line total for codemode mixed with another generic explore tool", () => {
+  const rules = { codemode: "explore", diagnostic: "explore" } as const;
+  const diagnostic: GroupMemberSummary = {
+    toolName: "diagnostic", classification: classifyTool("diagnostic", rules),
+    capabilities: { read: undefined, mutation: undefined }, metrics: NO_SUMMARY_METRICS,
+    settled: true, isError: false, readPath: undefined, outputLines: 7,
+  };
+  const code = { ...diagnostic, toolName: "codemode", classification: classifyTool("codemode", rules), outputLines: 4 };
+  const input = { classification: diagnostic.classification, members: [code, diagnostic], expanded: false };
+  expect(groupSummaryRequirements(input).outputLines).toBe(false);
+  expect(joinLine(groupSummary(input))).toBe("▸ Exploration 2 calls");
+
+  const withoutCode = { ...input, members: [diagnostic, diagnostic] };
+  expect(groupSummaryRequirements(withoutCode).outputLines).toBe(true);
+  expect(joinLine(groupSummary(withoutCode))).toBe("▸ Exploration 2 calls (14 lines)");
+});
