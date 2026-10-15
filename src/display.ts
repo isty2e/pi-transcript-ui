@@ -243,6 +243,16 @@ export function runningLine(
   return summaryParts(toolName, display, outcome, true, intent, layout);
 }
 
+function parentDurationText(ms: number): string {
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+
+  const totalSeconds = Math.floor(seconds);
+  const minutes = Math.floor(totalSeconds / 60);
+  const remainder = totalSeconds % 60;
+  return minutes < 60 ? `${minutes}m ${remainder}s` : `${Math.floor(minutes / 60)}h ${minutes % 60}m ${remainder}s`;
+}
+
 export function codemodeLine({ summary, isError, intent, layout = {} }: {
   readonly summary: CodemodeSummary;
   readonly isError: boolean;
@@ -257,10 +267,7 @@ export function codemodeLine({ summary, isError, intent, layout = {} }: {
     if (errors) facts.push(`${errors} ${errors === 1 ? "error" : "errors"}`);
     if (cancelled) facts.push(`${cancelled} cancelled`);
   }
-  if (summary.durationMs !== undefined) {
-    const ms = summary.durationMs;
-    facts.push(ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`);
-  }
+  if (summary.durationMs !== undefined) facts.push(parentDurationText(summary.durationMs));
   const outcome = `${isError ? " — error" : ""}${facts.length ? ` (${facts.join("; ")})` : ""}`;
   return summaryParts("codemode", { action: "Code", target: { kind: "nested-calls", calls: summary.calls } },
     outcome, summary.isPartial, intent, layout);

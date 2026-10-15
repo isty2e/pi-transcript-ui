@@ -2,10 +2,18 @@ import { expect, it } from "vitest";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { codemodeSummary } from "../src/codemode-summary.js";
 import { codemodeLine, joinLine } from "../src/display.js";
+import { formatToolDuration } from "../node_modules/pi-codemode-fixture/dist/core/tools/render-utils.js";
 
 const summarize = (calls: unknown, durationMs: unknown = 42, isPartial = false) => codemodeSummary({
   toolName: "codemode", args: { code: "" }, result: { details: { calls }, durationMs }, isPartial,
 })!;
+
+it.each([0, 42, 999, 1000, 1234, 59_950, 59_999, 60_000, 60_123, 125_300, 3_599_999, 3_600_000, 7_384_999])(
+  "matches native parent duration formatting at %d ms", durationMs => {
+    const line = joinLine(codemodeLine({ summary: summarize([], durationMs), isError: false }));
+    expect(line).toBe(`▸ Code (0 nested calls; ${formatToolDuration(durationMs)})`);
+  },
+);
 
 it("aggregates every observed status while bounding only the name preview", () => {
   const calls = Array.from({ length: 1000 }, (_, index) => ({ name: ["read", "bash", "models.classify", "edit"][index % 4],
@@ -22,7 +30,7 @@ it.each([undefined, null, false, {}, [null], [{}], [{ name: "read", status: "don
   const summary = summarize(calls);
   expect(summary.calls).toBeUndefined();
   expect(summary.durationMs).toBe(42);
-  expect(joinLine(codemodeLine({ summary, isError: false }))).toBe("▸ Code (42ms)");
+  expect(joinLine(codemodeLine({ summary, isError: false }))).toBe("▸ Code (0.0s)");
 });
 
 it.each([undefined, NaN, Infinity, -1, "1234"])("does not invent elapsed time from unusable duration: %s", duration => {
@@ -53,7 +61,7 @@ it("uses a bounded, plain, non-sequential name preview and retains partial/inten
   expect(line).not.toContain("\u001b[31m");
   expect(stripTerminalSequences(line)).not.toMatch(/[\r\n\u0007]/);
   expect(line).not.toContain("omitted");
-  expect(line).not.toContain("42ms");
+  expect(line).not.toContain("0.0s");
   expect(line).toContain("4 nested calls so far; 1 error");
   expect(line).toContain(" — Check actual activity…");
   expect(line).not.toContain("→");
