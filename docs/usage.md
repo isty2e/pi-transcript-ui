@@ -120,6 +120,27 @@ LF and CRLF are accepted. Recognition is limited to 65,536 UTF-16 units per payl
 
 This is not a patch-applicability validator or proof that the tool mutates files. Custom tools using the same shape for another purpose can override grouping in settings. Alternate Create/Edit envelope dialects, lenient unprefixed bodies, schema references/compositions, freeform transports, provider-specific applied receipts and phase outcomes are outside this support. No files are read to reconstruct missing counts.
 
+### Codemode
+
+Pi's native `codemode` tool keeps one parent row, with a compact summary of its recorded activity:
+
+```text
+Code…
+Code read ×2 (2 nested calls so far; 1 running)…
+Code read ×2, bash (3 nested calls; 1.2s)
+Code read, bash (2 nested calls; 1 error; 1.2s)
+Code read, bash — error (2 nested calls; 1 error; 1.2s)
+Code (0 nested calls; 42ms)
+```
+
+`×2` counts records with the same name. Up to three names are previewed; `…` can hide additional names, but the total still counts every recorded call. Names are not an execution-order diagram. Nested calls can include model operations such as `models.classify`, not just tools. They do not establish which files changed or how many edits were applied.
+
+While running, `so far` describes the current snapshot, not a planned total. Nested `error` and `cancelled` counts remain separate from the parent's `— error`: a script may catch a child error and finish successfully. Time is Pi's recorded parent execution duration, shown only after completion, not a sum of child durations or a separate live timer.
+
+Missing or unusable call records omit the nested aggregate; they do not become zero. A recorded empty list shows `0 nested calls`. Script output headers are not counted as output lines. Codemode is standalone by default; explicit grouping settings still apply, and groups count native parents rather than their nested calls.
+
+This support uses Pi's named `codemode` contract with a normalized string `code` input and recorded result metadata. It is not a generic script or batch-tool adapter. The script is not parsed to predict calls or rewritten to add purpose text. Expanding retains the original active renderer, including the script, progress and output it supplies. Reconstructing separate child rows or missing child result bodies is outside this support.
+
 ### Failures and unavailable counts
 
 `— error` marks an individual failure; `— N failed` marks failures in a group. Failure status and partial measurement are separate: a successful call may still have no usable count.
