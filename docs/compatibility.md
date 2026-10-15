@@ -4,6 +4,8 @@
 
 pi-transcript-ui presents tool summaries in interactive Pi sessions. Pi 0.85.1 is the checked runtime version. Other versions and arbitrary combinations of UI extensions are not assured to work.
 
+[Codemode summaries](usage.md#codemode) have additional targeted coverage on Pi 1.2.0: real sandbox execution, partial updates, saved results and native expanded-body rendering. This is not full terminal or compositor coverage for Pi 1.2.0, nor does the extension add codemode to older hosts.
+
 ## Input support
 
 Support depends on what is **active**, not merely installed.

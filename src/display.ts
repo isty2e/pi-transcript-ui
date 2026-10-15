@@ -9,6 +9,7 @@ import { fileMutationPath, type FileMutation } from "./file-mutation.js";
 import { commandPreview, type CommandPreviewMode } from "./command-preview.js";
 import { pathPreview } from "./path-preview.js";
 import type { PatchRequest } from "./patch-request.js";
+import type { CodemodeSummary } from "./codemode-summary.js";
 
 export interface CommandSpan {
   readonly source: string;
@@ -33,7 +34,8 @@ export type DisplayTarget =
   | Readonly<{ kind: "path"; path: string }>
   | Readonly<{ kind: "query"; query: string }>
   | Readonly<{ kind: "command"; command: string; shell?: "powershell" }>
-  | Readonly<{ kind: "patch-request"; request: PatchRequest }>;
+  | Readonly<{ kind: "patch-request"; request: PatchRequest }>
+  | Readonly<{ kind: "nested-calls"; calls: CodemodeSummary["calls"] }>;
 
 export interface ToolDisplay {
   readonly action: string;
@@ -151,6 +153,15 @@ export function targetText(target: DisplayTarget, limits: Readonly<Partial<Displ
     }
     case "query":
       return clip(`"${clip(target.query, MAX_TARGET_WIDTH)}"`, width);
+    case "nested-calls": {
+      if (!target.calls) return "";
+      const names = target.calls.names.map(({ name, count }) => {
+        const label = clip(stripTerminalSequences(name).replace(/[\u0000-\u001f\u007f-\u009f]/g, " "), 24);
+        return `${label}${count > 1 ? ` ×${count}` : ""}`;
+      });
+      if (target.calls.moreNames) names.push("…");
+      return clip(names.join(", "), Math.min(MAX_TARGET_WIDTH, width));
+    }
     case "command":
       return commandPreview(target.command, Math.min(width, limits.commandMaxWidth ?? DEFAULT_DISPLAY_LIMITS.commandMaxWidth), target.shell, limits.commandPreview);
   }
@@ -230,6 +241,29 @@ export function runningLine(
 ): LineParts {
   const outcome = display?.target.kind === "patch-request" ? ` ${requestedPatchText(display.target.request.delta)}` : "";
   return summaryParts(toolName, display, outcome, true, intent, layout);
+}
+
+export function codemodeLine({ summary, isError, intent, layout = {} }: {
+  readonly summary: CodemodeSummary;
+  readonly isError: boolean;
+  readonly intent?: string | null | undefined;
+  readonly layout?: RowLayout;
+}): LineParts {
+  const facts: string[] = [];
+  if (summary.calls) {
+    const { total, running, errors, cancelled } = summary.calls;
+    facts.push(`${total} nested ${total === 1 ? "call" : "calls"}${summary.isPartial ? " so far" : ""}`);
+    if (running) facts.push(`${running} running`);
+    if (errors) facts.push(`${errors} ${errors === 1 ? "error" : "errors"}`);
+    if (cancelled) facts.push(`${cancelled} cancelled`);
+  }
+  if (summary.durationMs !== undefined) {
+    const ms = summary.durationMs;
+    facts.push(ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`);
+  }
+  const outcome = `${isError ? " — error" : ""}${facts.length ? ` (${facts.join("; ")})` : ""}`;
+  return summaryParts("codemode", { action: "Code", target: { kind: "nested-calls", calls: summary.calls } },
+    outcome, summary.isPartial, intent, layout);
 }
 
 export interface SettledLineInput {
