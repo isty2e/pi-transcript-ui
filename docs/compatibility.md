@@ -6,6 +6,8 @@ pi-transcript-ui presents tool summaries in interactive Pi sessions. Pi 0.85.1 i
 
 [Codemode summaries](usage.md#codemode) have additional targeted coverage on Pi 1.2.0: real sandbox execution, partial updates, saved results and native expanded-body rendering. This is not full terminal or compositor coverage for Pi 1.2.0, nor does the extension add codemode to older hosts.
 
+[Shell-session summaries](usage.md#shell-sessions) are tested with provider-shaped requests and receipts and real native tool components on Pi 0.85.1 and 1.2.0. These component tests do not run the external providers, Pi's extension loader or a complete terminal/compositor session on 1.2.0.
+
 ## Input support
 
 Support depends on what is **active**, not merely installed.
@@ -31,6 +33,8 @@ Mouse behavior can also depend on the terminal. These modes do not establish sup
 ## Tool and provider support
 
 Built-in, custom and MCP tools can receive compact summaries. Recognition of file operations depends on the tool's declared inputs, not just its name. Unrecognized custom tools may use generic labels or omit file counts. [Patch request summaries](usage.md#patch-requests) additionally inspect a bounded content format; matching fields do not establish what was actually applied.
+
+Shell-session recognition checks the exact names and the supported direct request schema rather than treating every `exec_command` or `write_stdin` as interchangeable. Unsupported request variants keep generic/native presentation; unknown result metadata omits optional exit facts. Removing the duplicate expanded title also depends on a checked native component slot and falls back to the summary plus original body when that slot is unavailable.
 
 Purpose text depends on the model, provider and tool supporting the intent request. It is discretionary even when supported. A missing purpose is not itself an error; the command or path can still be shown.
 

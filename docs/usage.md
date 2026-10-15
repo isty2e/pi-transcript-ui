@@ -120,6 +120,27 @@ LF and CRLF are accepted. Recognition is limited to 65,536 UTF-16 units per payl
 
 This is not a patch-applicability validator or proof that the tool mutates files. Custom tools using the same shape for another purpose can override grouping in settings. Alternate Create/Edit envelope dialects, lenient unprefixed bodies, schema references/compositions, freeform transports, provider-specific applied receipts and phase outcomes are outside this support. No files are read to reconstruct missing counts.
 
+### Shell sessions
+
+Compatible `exec_command` and `write_stdin` calls use request-oriented summaries:
+
+```text
+Run npm test
+Run npm test (exit 7)
+Check output
+Send input
+```
+
+Recognition requires the exact tool name and a bounded direct object schema: required string `cmd` for `exec_command`, or required numeric `session_id` and declared string `chars` for `write_stdin`. Commands stay in the Raw first-line form, without assuming Bash syntax or applying shell colors. Expanded rendering is left untouched.
+
+For the supported plain-string input contract, absent or empty `chars` means `Check output`; any nonempty string, including whitespace or control input, means `Send input`. The summary does not echo the input or show a session ID. Nonempty binary input, unknown input fields, ambiguous defaults, unsupported schemas and malformed requests keep the existing generic/native presentation. This is not a decoder for provider-specific input formats.
+
+An exit code appears only after the call settles and supported result metadata supplies it. Recognized receipt shapes use `output` and `wall_time_seconds` with `exit_code`, `chunkId` and `wallTimeSeconds` with `exitCode`, or matching `tool`, `status: "exited"`, `output` and `durationMs` with `exitCode`. Missing, malformed or conflicting codes are omitted, not treated as success. Exit codes do not determine the native `— error` marker, and the summary does not infer whether a process is still running. Recognized shell summaries omit output-line totals; a group containing one also omits the group-wide output-line total. Groups still count native calls.
+
+When the checked native component exposes a nonempty text call title and mouse disclosure, expanding shows its complete original rendering without a duplicate summary title. A small disclosure/purpose row remains while waiting for the first result or when purpose text is available. Hidden, throwing or unrecognized call renderers retain the summary row above the original body instead. Keyboard disclosure remains available where supported.
+
+This changes presentation only. It does not join calls by session ID, reconstruct the command behind `write_stdin`, split scripts into tools or recursively rewrite another extension's nested text components. File-operation recognition takes precedence over these shell summaries.
+
 ### Codemode
 
 Pi's native `codemode` tool keeps one parent row, with a compact summary of its recorded activity:
