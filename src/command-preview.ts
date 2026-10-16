@@ -311,7 +311,8 @@ function preview(command: string, width: number, shell: "bash" | "powershell", m
     return plain(width <= visibleWidth(marker) ? clip(plain(marker.trimStart()), width).text
       : clip(firstLine, width - visibleWidth(marker)).text + marker);
   };
-  if (mode === "raw" || shell !== "bash" || widthOf(firstLine) <= width && newline < 0) return clip(firstLine, width);
+  if (mode === "raw" || shell !== "bash") return fallback();
+  if (widthOf(firstLine) <= width && newline < 0) return clip(firstLine, width);
   const parsed = stages(command, tracing);
   if (!parsed) return fallback();
   const descriptions = parsed.map(stage => stageText(stage, tracing));

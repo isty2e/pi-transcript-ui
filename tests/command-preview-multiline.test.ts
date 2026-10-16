@@ -82,14 +82,24 @@ it("marks multiline budget fallback and incomplete operators", () => {
   }
 });
 
-it("preserves Raw and PowerShell first-line behavior at every width", () => {
+it("marks omitted Raw and PowerShell lines without interpreting them at every width", () => {
   const source = "set -euo pipefail\nnpm test\ngit diff --check";
+  const markerWidth = visibleWidth(" […]");
   for (let width = 0; width <= 120; width++) {
-    const firstLine = truncateToWidth("set -euo pipefail", width, "…");
+    const firstLine = width <= markerWidth ? truncateToWidth("[…]", width, "…")
+      : truncateToWidth("set -euo pipefail", width - markerWidth, "…") + " […]";
     expect(commandPreview(source, width, "bash", "raw")).toBe(firstLine);
     expect(commandPreview(source, width, "powershell")).toBe(firstLine);
   }
 });
+
+it.each(["cd repo\nrm -rf build\nnpm test", "python <<'PY'\nprint('body')\nPY", "Write-Output @'\nbody\n'@"])(
+  "shows only the unparsed first line plus an omission marker for %j", source => {
+    const expected = source.split("\n", 1)[0] + " […]";
+    expect(commandPreview(source, 120, "bash", "raw")).toBe(expected);
+    expect(commandPreview(source, 120, "powershell")).toBe(expected);
+  },
+);
 
 it("uses multiline previews in final summaries without changing original arguments", () => {
   const command = "set -euo pipefail\nnpm test\ngit diff --check";

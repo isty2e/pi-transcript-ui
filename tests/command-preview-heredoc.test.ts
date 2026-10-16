@@ -103,12 +103,14 @@ it("retains literal origins after skipped bodies without matching repeated body 
 it("counts only known outer stages and preserves width and mode contracts", () => {
   const source = 'cat <<EOF | grep body\nhidden_command\nEOF\ngit status';
   const previews = Array.from({ length: 161 }, (_, width) => commandPreview(source, width));
+  const markerWidth = visibleWidth(' […]');
   expect(previews.some(preview => preview.includes('[+2]'))).toBe(true);
   for (const [width, preview] of previews.entries()) {
     expect(visibleWidth(preview)).toBeLessThanOrEqual(width);
     expect(preview).not.toMatch(/hidden_command|EOF|\[more\]|\n/);
     expect(stripTerminalSequences(preview)).toBe(commandPreviewPlan(source, width).text);
-    const first = truncateToWidth(source.split('\n')[0]!, width, '…');
+    const first = width <= markerWidth ? truncateToWidth('[…]', width, '…')
+      : truncateToWidth(source.split('\n')[0]!, width - markerWidth, '…') + ' […]';
     expect(commandPreview(source, width, 'bash', 'raw')).toBe(first);
     expect(commandPreview(source, width, 'powershell')).toBe(first);
   }
