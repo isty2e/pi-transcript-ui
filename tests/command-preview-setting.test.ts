@@ -18,7 +18,7 @@ it("defaults old settings to Compact without changing the supplied object", () =
 });
 it("uses marked raw first-line fallback at every width without compact transformations", () => {
   const source = `ENV=value\t${command}\r\necho next-line`;
-  const first = source.split('\n')[0]!.replace(/[\r\t]/g, ' ');
+  const first = source.split('\n')[0]!.replace(/\r$/, '').replace(/[\r\t]/g, ' ');
   const markerWidth = visibleWidth(' […]');
   for (let width = 0; width <= 180; width++) {
     const expected = width <= markerWidth ? truncateToWidth('[…]', width, '…')

@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { commandPreview } from "../src/command-preview.js";
+import { COMMAND_SOURCE_LIMIT, commandPreview, commandPreviewPlan } from "../src/command-preview.js";
 import { displayFor, joinLine, settledLine } from "../src/display.js";
 import { NO_SUMMARY_METRICS } from "../src/tool-metrics.js";
 
@@ -80,6 +80,36 @@ it("marks multiline budget fallback and incomplete operators", () => {
     expect(commandPreview(source, 80)).toContain("[…]");
     expect(commandPreview(source, 80)).not.toContain("↵");
   }
+});
+
+it.each(["\n", "\n\n  \n", "\r\n", "\r\n \t\r\n"])("does not claim omitted source for a blank suffix: %j", suffix => {
+  const source = "npm test" + suffix;
+  for (const width of [0, 1, 4, 8, 12, 80, 120]) {
+    const expected = truncateToWidth("npm test", width, "…");
+    expect(commandPreview(source, width, "bash", "raw")).toBe(expected);
+    expect(commandPreview(source, width, "powershell", "raw")).toBe(expected);
+    expect(commandPreview(source, width, "powershell")).toBe(expected);
+  }
+  expect(commandPreview(source, 120)).toBe("npm test");
+  expect(commandPreviewPlan(source, 120).text).toBe("npm test");
+});
+
+it("omits whitespace-only tails when the Compact scanner refuses oversized source", () => {
+  const first = "x".repeat(COMMAND_SOURCE_LIMIT + 1);
+  const source = first + "\n \t\n";
+  for (const width of [0, 1, 8, 80]) {
+    const expected = truncateToWidth(first, width, "…");
+    expect(commandPreview(source, width)).toBe(expected);
+    expect(commandPreviewPlan(source, width).text).toBe(expected);
+  }
+});
+
+it("strips only the first CRLF separator before marking meaningful omitted source", () => {
+  const source = "npm test\r\n \tgit status\r\n";
+  expect(commandPreview(source, 120, "bash", "raw")).toBe("npm test […]");
+  expect(commandPreview(source, 120, "powershell")).toBe("npm test […]");
+  expect(commandPreview(source, 120)).toBe("npm test […]");
+  expect(commandPreview("printf a\rb", 120, "bash", "raw")).toBe("printf a b");
 });
 
 it("marks omitted Raw and PowerShell lines without interpreting them at every width", () => {

@@ -31,6 +31,13 @@ it("marks omitted command lines before the whole-script exit code", () => {
   expect(joinLine(shellSessionLine(summary, false, false))).toBe("▸ Run cd repo […] (exit 0)");
 });
 
+it.each(["\n", "\n\n  \n", "\r\n", "\r\n \t\r\n"])("keeps trailing whitespace out of the omission claim and exit label: %j", suffix => {
+  const args = { cmd: "npm test" + suffix };
+  const summary = summarize("exec_command", args, { output: "", wall_time_seconds: 1, exit_code: 0 })!;
+  expect(joinLine(shellSessionLine(summary, false, false))).toBe("▸ Run npm test (exit 0)");
+  expect(args.cmd).toBe("npm test" + suffix);
+});
+
 it.each(["\nnpm test", " \t\nnpm test", "\r\nnpm test"])("refuses an empty first command line: %j", cmd => {
   expect(summarize("exec_command", { cmd })).toBeUndefined();
 });

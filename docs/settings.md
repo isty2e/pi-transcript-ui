@@ -66,7 +66,7 @@ To show longer commands, increase the total row and command limits as needed, wi
 
 **Compact** shortens supported Bash syntax to keep command names and separators visible. See the [preview markers](usage.md#command-previews).
 
-**Raw** shows the original first line within the same width limits, without compact structure, path, environment or substitution transformations. Tabs and carriage returns are normalized for display. Raw does not mean unbounded or byte-for-byte output.
+**Raw** shows the original first line within the same width limits, without compact structure, path, environment or substitution transformations. `[…]` marks omitted lines containing non-whitespace source; trailing blank or whitespace-only lines do not add the marker. CRLF separators are not shown; tabs and literal carriage returns are normalized for display. Raw does not mean unbounded or byte-for-byte output. See the [preview details](usage.md#command-previews).
 
 PowerShell uses the raw first-line form in either mode. Neither mode changes execution or expanded output.
 

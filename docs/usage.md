@@ -131,7 +131,7 @@ Check output
 Send input
 ```
 
-Recognition requires the exact tool name and a bounded direct object schema: required string `cmd` for `exec_command`, or required numeric `session_id` and declared string `chars` for `write_stdin`. Commands use an unparsed first-line preview, without assuming Bash syntax or applying shell colors. Multiline input adds `[…]` to mark omitted source when space permits: `Run cd repo […] (exit 0)`. A blank first line uses generic/native presentation instead of an empty `Run` label. The exit code describes the whole call, not just the displayed line.
+Recognition requires the exact tool name and a bounded direct object schema: required string `cmd` for `exec_command`, or required numeric `session_id` and declared string `chars` for `write_stdin`. Commands use an unparsed first-line preview, without assuming Bash syntax or applying shell colors. Non-whitespace source on later lines adds `[…]` to mark omission when space permits: `Run cd repo […] (exit 0)`. Trailing blank or whitespace-only lines do not add the marker. A blank first line uses generic/native presentation instead of an empty `Run` label. The exit code describes the whole call, not just the displayed line.
 
 For the supported plain-string input contract, absent or empty `chars` means `Check output`; any nonempty string, including whitespace or control input, means `Send input`. The summary does not echo the input or show a session ID. Nonempty binary input, unknown input fields, ambiguous defaults, unsupported schemas and malformed requests keep the existing generic/native presentation. This is not a decoder for provider-specific input formats.
 
@@ -217,6 +217,6 @@ Compact recognizes `<<` and `<<-` after a command name, with nonempty delimiter 
 
 Compact does not fully parse shell scripts. Here-strings (`<<<`), heredocs inside command substitutions, redirections before the command name, other delimiter spellings, quoted newlines and other unsupported syntax remain out of scope. These cases, or an unconfirmed heredoc boundary, retain earlier recognized commands followed by one opaque remainder such as `python […]`; scanning does not resume beyond that remainder. This conservative boundary avoids presenting body text as commands. Unsupported initial single-line syntax and commands too large to compact use a first-line preview; multiline fallback also marks omitted content with `[…]`.
 
-Raw and PowerShell previews show the first line without interpreting its syntax. Multiline sources add `[…]` to indicate omitted lines when space permits; the marker itself may be clipped at very narrow widths. PowerShell always uses this form.
+Raw and PowerShell previews show the first line without interpreting its syntax. If later lines contain non-whitespace source, `[…]` indicates omission when space permits; trailing blank or whitespace-only lines do not add it. CRLF separators do not appear as extra spaces. The marker itself may be clipped at very narrow widths. PowerShell always uses this form.
 
 Choose **Raw** in [command preview settings](settings.md#command-preview) to bypass compact transformations. Both modes obey the row and field width limits; neither changes execution or expanded output.
