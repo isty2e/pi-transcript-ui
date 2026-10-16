@@ -16,11 +16,14 @@ it("defaults old settings to Compact without changing the supplied object", () =
   expect(JSON.stringify(old)).toBe(original);
   expect(parseSettings({ ...old, display: { ...old.display, commandPreview: 'raw' } }).display.commandPreview).toBe('raw');
 });
-it("uses canonical raw first-line fallback at every width without compact transformations", () => {
+it("uses marked raw first-line fallback at every width without compact transformations", () => {
   const source = `ENV=value\t${command}\r\necho next-line`;
   const first = source.split('\n')[0]!.replace(/[\r\t]/g, ' ');
+  const markerWidth = visibleWidth(' […]');
   for (let width = 0; width <= 180; width++) {
-    expect(commandPreview(source, width, 'bash', 'raw')).toBe(truncateToWidth(first, width, '…'));
+    const expected = width <= markerWidth ? truncateToWidth('[…]', width, '…')
+      : truncateToWidth(first, width - markerWidth, '…') + ' […]';
+    expect(commandPreview(source, width, 'bash', 'raw')).toBe(expected);
     expect(visibleWidth(commandPreview(source, width, 'bash', 'raw'))).toBeLessThanOrEqual(width);
   }
   expect(commandPreview(command, 60)).toContain('git status');
