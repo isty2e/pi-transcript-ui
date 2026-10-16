@@ -74,7 +74,7 @@ This option does not alter group headers or the original expanded rendering. Nat
 | --- | --- | --- | --- |
 | Command preview | `display.commandPreview` | Compact (`"compact"`) | Compact (`"compact"`) / Raw (`"raw"`) |
 
-**Compact** shortens supported Bash syntax to keep command names and separators visible. See the [preview markers](usage.md#command-previews).
+**Compact** shortens supported Bash syntax and recognized zsh requests to keep command names and separators visible. See the [preview rules and markers](usage.md#command-previews).
 
 **Raw** shows the original first line within the same width limits, without compact structure, path, environment or substitution transformations. `[…]` marks omitted lines containing non-whitespace source; trailing blank or whitespace-only lines do not add the marker. CRLF separators are not shown; tabs and literal carriage returns are normalized for display. Raw does not mean unbounded or byte-for-byte output. See the [preview details](usage.md#command-previews).
 

@@ -2,7 +2,7 @@ import { INTENT_FIELD, isRecord } from "./intent.js";
 import { supportedDirectSchema } from "./schema-capability.js";
 
 export type ShellSessionSummary = (
-  | Readonly<{ action: "Run"; command: string; commandSyntax?: "bash" }>
+  | Readonly<{ action: "Run"; command: string; commandSyntax?: "bash" | "zsh" }>
   | Readonly<{ action: "Check output" | "Send input"; command?: never }>
 ) & Readonly<{ exitCode?: number }>;
 
@@ -55,7 +55,8 @@ export function shellSessionSummary({ toolName, parameters, args, result, isPart
       const shell: unknown = isRecord(shellSchema) && Object.getOwnPropertyDescriptor(shellSchema, "type")?.value === "string"
         ? Object.getOwnPropertyDescriptor(args, "shell")?.value : undefined;
       const executable = typeof shell === "string" ? shell.split(/[\\/]/).at(-1) : undefined;
-      const syntax = executable === "bash" || executable === "bash.exe" ? { commandSyntax: "bash" as const } : {};
+      const syntax = executable === "bash" || executable === "bash.exe" ? { commandSyntax: "bash" as const }
+        : executable === "zsh" || executable === "zsh.exe" ? { commandSyntax: "zsh" as const } : {};
       return { action: "Run", command: args.cmd, ...syntax, ...outcome };
     }
 

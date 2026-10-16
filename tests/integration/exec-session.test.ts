@@ -146,16 +146,16 @@ it("keeps established file capabilities ahead of a same-named shell request", ()
   } finally { dispose(); }
 });
 
-it("rechecks explicit Bash preview evidence and Raw selection without changing Native state", () => {
+it.each(["bash", "zsh"])("rechecks explicit %s preview evidence and Raw selection without changing Native state", shell => {
   initTheme();
   const { root, chat } = nativeTranscript();
   const command = "cd /workspace/a/long/project/directory && npm run build --configuration lengthy-development-profile || printf '%s' fallback | head -n 20";
-  const args: { cmd: string; shell?: string } = { cmd: command, shell: "/usr/local/bin/bash" };
+  const args: { cmd: string; shell?: string } = { cmd: command, shell: `/usr/local/bin/${shell}` };
   const fields = { cmd: { type: "string" }, shell: { type: "string" } };
   const def = definition("exec_command");
   def.parameters = { type: "object", properties: fields, required: ["cmd"] } as ToolDefinition["parameters"];
   def.renderCall = () => new Text(`Native requested command\n${command}`, 0, 0);
-  const tool = nativeTool({ name: def.name, id: "bash-preview", args, definition: def }) as unknown as NativeToolComponent;
+  const tool = nativeTool({ name: def.name, id: `${shell}-preview`, args, definition: def }) as unknown as NativeToolComponent;
   const result = { content: [{ type: "text" as const, text: "Original complete output" }], isError: false,
     details: { output: "Original complete output", wall_time_seconds: 1, exit_code: 0 }, durationMs: 125300 };
   tool.updateResult(result);
@@ -183,10 +183,17 @@ it("rechecks explicit Bash preview evidence and Raw selection without changing N
     expect(header()).toContain("— Check build");
     purpose = undefined; tool.updateDisplay();
 
-    args.shell = "/bin/zsh"; tool.updateArgs(args);
+    args.shell = "/bin/zsh";
+    args.cmd = "npm test\nrepeat 2 do\nprintf HIDDEN\ndone\nprintf AFTER";
+    tool.updateArgs(args);
+    expect(header()).toContain("Run npm test ↵ repeat […]");
+    expect(header()).not.toMatch(/HIDDEN|AFTER/);
+    args.cmd = command;
+
+    args.shell = "/bin/fish"; tool.updateArgs(args);
     const raw = header();
     expect(raw).not.toContain("||");
-    args.shell = "/opt/homebrew/bin/bash"; tool.updateArgs(args);
+    args.shell = `/opt/homebrew/bin/${shell}`; tool.updateArgs(args);
     expect(header()).toMatch(/&&.*\|\|.*\|/);
     limits.commandPreview = "raw"; tool.updateDisplay();
     expect(header()).toBe(raw);
@@ -200,7 +207,7 @@ it("rechecks explicit Bash preview evidence and Raw selection without changing N
     delete args.shell; tool.updateArgs(args);
     expect(header()).toBe(raw);
     expect(tool.args).toBe(args); expect(tool.result).toBe(result); expect(tool.toolDefinition).toBe(def);
-    args.shell = "bash";
+    args.shell = shell;
     const failed = { ...result, isError: true, details: { ...result.details, exit_code: 7 } };
     tool.updateArgs(args); tool.updateResult(failed);
     expect(header()).toMatch(/&&.*\|\|.*\|/);
