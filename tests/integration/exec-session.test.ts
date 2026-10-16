@@ -146,6 +146,70 @@ it("keeps established file capabilities ahead of a same-named shell request", ()
   } finally { dispose(); }
 });
 
+it("rechecks explicit Bash preview evidence and Raw selection without changing Native state", () => {
+  initTheme();
+  const { root, chat } = nativeTranscript();
+  const command = "cd /workspace/a/long/project/directory && npm run build --configuration lengthy-development-profile || printf '%s' fallback | head -n 20";
+  const args: { cmd: string; shell?: string } = { cmd: command, shell: "/usr/local/bin/bash" };
+  const fields = { cmd: { type: "string" }, shell: { type: "string" } };
+  const def = definition("exec_command");
+  def.parameters = { type: "object", properties: fields, required: ["cmd"] } as ToolDefinition["parameters"];
+  def.renderCall = () => new Text(`Native requested command\n${command}`, 0, 0);
+  const tool = nativeTool({ name: def.name, id: "bash-preview", args, definition: def }) as unknown as NativeToolComponent;
+  const result = { content: [{ type: "text" as const, text: "Original complete output" }], isError: false,
+    details: { output: "Original complete output", wall_time_seconds: 1, exit_code: 0 }, durationMs: 125300 };
+  tool.updateResult(result);
+  tool.setExpanded(true);
+  const widths = [1, 5, 24, 72, 120];
+  const native = new Map(widths.map(width => [width, tool.render(width)]));
+  tool.setExpanded(false); chat.addChild(tool);
+  const limits = { commandPreview: "compact" as "compact" | "raw" };
+  let purpose: string | undefined;
+  const dispose = attachTranscriptPresentation(root, { getTheme: () => theme, requestRender: vi.fn(), displayLimits: limits,
+    resolveIntent: () => purpose });
+  try {
+    const header = () => stripTerminalSequences(tool.render(72).join("\n"));
+    expect(header()).toMatch(/&&.*\|\|.*\|/);
+    expect(header()).toContain("(exit 0) (2m 5s)");
+    tool.setExpanded(true);
+    for (const width of widths) {
+      const rows = tool.render(width);
+      expect(rows.slice(2)).toEqual(native.get(width));
+      expect(visibleWidth(rows[1]!)).toBeLessThanOrEqual(width);
+    }
+    tool.setExpanded(false);
+    purpose = "Check build"; tool.updateDisplay();
+    expect(header()).toMatch(/&&.*\|\|.*\|/);
+    expect(header()).toContain("— Check build");
+    purpose = undefined; tool.updateDisplay();
+
+    args.shell = "/bin/zsh"; tool.updateArgs(args);
+    const raw = header();
+    expect(raw).not.toContain("||");
+    args.shell = "/opt/homebrew/bin/bash"; tool.updateArgs(args);
+    expect(header()).toMatch(/&&.*\|\|.*\|/);
+    limits.commandPreview = "raw"; tool.updateDisplay();
+    expect(header()).toBe(raw);
+    limits.commandPreview = "compact"; tool.updateDisplay();
+    expect(header()).toMatch(/&&.*\|\|.*\|/);
+
+    fields.shell.type = "number"; tool.updateDisplay();
+    expect(header()).toBe(raw);
+    fields.shell.type = "string"; tool.updateDisplay();
+    expect(header()).toMatch(/&&.*\|\|.*\|/);
+    delete args.shell; tool.updateArgs(args);
+    expect(header()).toBe(raw);
+    expect(tool.args).toBe(args); expect(tool.result).toBe(result); expect(tool.toolDefinition).toBe(def);
+    args.shell = "bash";
+    const failed = { ...result, isError: true, details: { ...result.details, exit_code: 7 } };
+    tool.updateArgs(args); tool.updateResult(failed);
+    expect(header()).toMatch(/&&.*\|\|.*\|/);
+    expect(header()).toContain("— error (exit 7)");
+    expect(tool.result).toBe(failed);
+    expect(def.execute).not.toHaveBeenCalled();
+  } finally { dispose(); }
+});
+
 it("reevaluates blank and multiline exec requests while retaining the full native source", () => {
   initTheme();
   const { root, chat } = nativeTranscript();

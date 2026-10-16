@@ -48,6 +48,8 @@ Built-in, custom and MCP tools can receive compact summaries. Recognition of fil
 
 Shell-session recognition checks the exact names and the supported direct request schema rather than treating every `exec_command` or `write_stdin` as interchangeable. Unsupported request variants keep generic/native presentation; unknown result metadata omits optional exit facts. Expanded calls retain the summary plus original body, as with other tools; provider-hidden bodies are not reconstructed or used to suppress native call identities.
 
+Explicit Bash `exec_command` calls can share Bash Compact formatting and best-effort colors; Raw selections and missing/default or other-shell calls stay Raw. See [shell-session details](usage.md#shell-sessions) for filename/schema limits. This does not change execution or the existing native `bash` and `powershell` tool rules.
+
 Purpose text depends on the model, provider and tool supporting the intent request. It is discretionary even when supported. A missing purpose is not itself an error; the command or path can still be shown.
 
 Unsupported UI components keep native presentation and produce a diagnostic rather than having their output reconstructed. Unusual renderers, image display and very large session histories are not covered by a blanket compatibility guarantee.

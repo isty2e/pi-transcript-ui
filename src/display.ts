@@ -265,7 +265,8 @@ export function shellSessionLine(summary: ShellSessionSummary, isError: boolean,
   context: ToolSummaryContext = {}): LineParts {
   const outcome = `${isError ? " — error" : ""}${summary.exitCode === undefined ? "" : ` (exit ${summary.exitCode})`}`;
   return summaryParts(summary.action, { action: summary.action, target: summary.action === "Run"
-    ? { kind: "opaque-command", command: summary.command } : { kind: "none" } }, outcome, isPartial, context);
+    ? { kind: summary.commandSyntax === "bash" ? "command" : "opaque-command", command: summary.command }
+    : { kind: "none" } }, outcome, isPartial, context);
 }
 
 function toolDurationText(ms: number): string {
