@@ -6,12 +6,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   createAgentSession, DefaultResourceLoader, getPackageDir, initTheme, ModelRuntime, SessionManager, SettingsManager,
-  ToolExecutionComponent, type ExtensionFactory, type CodemodeToolDetails,
+  ToolExecutionComponent, VERSION, type ExtensionFactory, type CodemodeToolDetails,
 } from "@earendil-works/pi-coding-agent";
 import { Container, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import transcriptUi from "../../src/index.js";
 import { attachTranscriptPresentation } from "../../src/wiring.js";
 import { theme } from "../fixtures/pi-theme.js";
+import { piCapabilities } from "../fixtures/pi-capabilities.js";
 
 const { createCodemodeExtension } = await import(join(getPackageDir(), "dist/extensions/codemode/index.js")) as {
   createCodemodeExtension: (options: { models: boolean }) => ExtensionFactory;
@@ -125,7 +126,8 @@ it("summarizes actual host execution, progress and persisted results without rep
         expect(updates.length).toBeGreaterThan(0);
         expect(updates.some(update => update.calls.some(call => call.status === "running"))).toBe(true);
         expect(updates.every(update => update.row.includes("so far") && !/\d(?:ms|s)\)/.test(update.row))).toBe(true);
-        expect(receipt.durationMs).toBeGreaterThanOrEqual(0);
+        if (piCapabilities(VERSION).recordedToolDuration) expect(receipt.durationMs).toBeGreaterThanOrEqual(0);
+        else expect(receipt.durationMs).toBeUndefined();
       } else {
         expect(label).not.toContain("nested call");
       }

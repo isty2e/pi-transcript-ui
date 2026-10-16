@@ -8,10 +8,11 @@ import {
   SettingsManager as StructuredSettings, type BuildSystemPromptOptions as StructuredPromptOptions,
   type ExtensionError as StructuredError, type ExtensionFactory as StructuredFactory, type ExtensionUIContext as StructuredUI,
 } from "@earendil-works/pi-coding-agent";
-import type { ExtensionRunner as CompatiblePromptRunner } from "pi-structured-prompt-fixture";
+import type { ExtensionRunner as CompatiblePromptRunner } from "pi-compat-fixture";
 import transcriptUi from "../../src/index.js";
 import { intentGuideline } from "../../src/intent.js";
 import { defaultSettings } from "../../src/settings.js";
+import { piCapabilities } from "../fixtures/pi-capabilities.js";
 
 const { buildSystemPrompt: renderStructured } = await import(join(getStructuredPackageDir(), "dist/core/system-prompt.js")) as {
   buildSystemPrompt: (options: StructuredPromptOptions) => string;
@@ -44,9 +45,11 @@ async function structuredRunner(factories: StructuredFactory[] = [structuredTran
   runner.onError(error => errors.push(error));
   await runner.emit({ type: "session_start", reason: "startup" });
   expect(errors).toEqual([]);
-  const start = (prompt: string, options: StructuredPromptOptions) => VERSION === "0.99.1"
-    ? (runner as unknown as CompatiblePromptRunner).emitBeforeAgentStart(prompt, undefined, options)
-    : runner.emitBeforeAgentStart({ messageType: "user", prompt }, options);
+  const capabilities = piCapabilities(VERSION);
+  if (capabilities.promptApi === "legacy-string") throw new Error("This suite requires structured system prompts");
+  const start = (prompt: string, options: StructuredPromptOptions) => capabilities.promptApi === "structured-trigger"
+    ? runner.emitBeforeAgentStart({ messageType: "user", prompt }, options)
+    : (runner as unknown as CompatiblePromptRunner).emitBeforeAgentStart(prompt, undefined, options);
 
   return { runner, errors, start };
 }
