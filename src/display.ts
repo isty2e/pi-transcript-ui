@@ -10,7 +10,7 @@ import { commandPreview, type CommandPreviewMode } from "./command-preview.js";
 import { pathPreview } from "./path-preview.js";
 import type { PatchRequest } from "./patch-request.js";
 import type { CodemodeSummary } from "./codemode-summary.js";
-import type { ShellSummary } from "./exec-summary.js";
+import type { ShellSessionSummary } from "./shell-session-summary.js";
 
 export interface CommandSpan {
   readonly source: string;
@@ -35,7 +35,8 @@ export type DisplayTarget =
   | Readonly<{ kind: "none" }>
   | Readonly<{ kind: "path"; path: string }>
   | Readonly<{ kind: "query"; query: string }>
-  | Readonly<{ kind: "command"; command: string; shell?: "powershell" | "opaque" }>
+  | Readonly<{ kind: "command"; command: string; shell?: "powershell" }>
+  | Readonly<{ kind: "opaque-command"; command: string }>
   | Readonly<{ kind: "patch-request"; request: PatchRequest }>
   | Readonly<{ kind: "nested-calls"; calls: CodemodeSummary["calls"] }>;
 
@@ -166,9 +167,11 @@ export function targetText(target: DisplayTarget, limits: Readonly<Partial<Displ
       if (target.calls.moreNames) names.push("…");
       return clip(names.join(", "), Math.min(MAX_TARGET_WIDTH, width));
     }
-    case "command":
+    case "opaque-command":
       return commandPreview(target.command, Math.min(width, limits.commandMaxWidth ?? DEFAULT_DISPLAY_LIMITS.commandMaxWidth),
-        target.shell === "opaque" ? "bash" : target.shell, target.shell === "opaque" ? "raw" : limits.commandPreview);
+        undefined, "raw");
+    case "command":
+      return commandPreview(target.command, Math.min(width, limits.commandMaxWidth ?? DEFAULT_DISPLAY_LIMITS.commandMaxWidth), target.shell, limits.commandPreview);
   }
 }
 
@@ -248,18 +251,11 @@ export function runningLine(
   return summaryParts(toolName, display, outcome, true, intent, layout);
 }
 
-export function shellLine(summary: ShellSummary, isError: boolean, isPartial: boolean,
+export function shellSessionLine(summary: ShellSessionSummary, isError: boolean, isPartial: boolean,
   intent?: string, layout: RowLayout = {}): LineParts {
   const outcome = `${isError ? " — error" : ""}${summary.exitCode === undefined ? "" : ` (exit ${summary.exitCode})`}`;
   return summaryParts(summary.action, { action: summary.action, target: summary.action === "Run"
-    ? { kind: "command", command: summary.command, shell: "opaque" } : { kind: "none" } }, outcome, isPartial, intent, layout);
-}
-
-export function disclosureLine(intent: string | undefined, layout: RowLayout = {}): LineParts {
-  const limits = { ...DEFAULT_DISPLAY_LIMITS, ...layout.limits };
-  const available = Math.max(0, Math.min(layout.width ?? limits.rowMaxWidth, limits.rowMaxWidth) - 2);
-  const text = intent ? clip(stripTerminalSequences(intent).replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").trim(), Math.min(available, limits.intentMaxWidth)) : "";
-  return { marker: "▾", action: "", rest: text, ...(text ? { intent: { offset: 0, length: text.length } } : {}) };
+    ? { kind: "opaque-command", command: summary.command } : { kind: "none" } }, outcome, isPartial, intent, layout);
 }
 
 function parentDurationText(ms: number): string {

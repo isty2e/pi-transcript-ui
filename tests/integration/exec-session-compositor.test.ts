@@ -51,7 +51,9 @@ it.skipIf(!source).each(["exec_command", "write_stdin"])("keeps %s disclosure re
       expect(row).toBeGreaterThanOrEqual(0);
       click(row);
       expect(tool.expanded).toBe(true);
-      expect(lines().slice(-native.length)).toEqual(native);
+      expect(lines()[0]).toBe("");
+      expect(lines()[1]).toContain(`▾ ${label}`);
+      expect(lines().slice(2)).toEqual(native);
       if (phase !== "hidden" && phase !== "pending") expect(lines().filter(line => line.includes("Native output"))).toHaveLength(1);
       if (phase === "intent") expect(lines().join("\n")).toContain("Checking tests");
 

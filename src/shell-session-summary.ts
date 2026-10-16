@@ -1,7 +1,7 @@
 import { INTENT_FIELD, isRecord } from "./intent.js";
 import { supportedDirectSchema } from "./schema-capability.js";
 
-export type ShellSummary = (
+export type ShellSessionSummary = (
   | Readonly<{ action: "Run"; command: string }>
   | Readonly<{ action: "Check output" | "Send input"; command?: never }>
 ) & Readonly<{ exitCode?: number }>;
@@ -28,13 +28,13 @@ function receiptExitCode(details: unknown, toolName: string): number | undefined
 }
 
 /** Project the common request subset; unknown schemas, input channels and receipts stay opaque. */
-export function shellSummary({ toolName, parameters, args, result, isPartial }: {
+export function shellSessionSummary({ toolName, parameters, args, result, isPartial }: {
   readonly toolName: string;
   readonly parameters: unknown;
   readonly args: unknown;
   readonly result?: { details?: unknown } | undefined;
   readonly isPartial: boolean;
-}): ShellSummary | undefined {
+}): ShellSessionSummary | undefined {
   try {
     if (toolName !== "exec_command" && toolName !== "write_stdin") return undefined;
     if (!supportedDirectSchema(parameters) || !isRecord(parameters) || parameters.type !== "object" ||
@@ -47,7 +47,7 @@ export function shellSummary({ toolName, parameters, args, result, isPartial }: 
     const outcome = exit === undefined ? {} : { exitCode: exit };
 
     if (toolName === "exec_command") {
-      if (!required("cmd", "string") || typeof args.cmd !== "string" || !args.cmd.trim()) return undefined;
+      if (!required("cmd", "string") || typeof args.cmd !== "string" || !args.cmd.split("\n", 1)[0]?.trim()) return undefined;
       return { action: "Run", command: args.cmd, ...outcome };
     }
 

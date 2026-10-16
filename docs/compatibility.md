@@ -34,7 +34,7 @@ Mouse behavior can also depend on the terminal. These modes do not establish sup
 
 Built-in, custom and MCP tools can receive compact summaries. Recognition of file operations depends on the tool's declared inputs, not just its name. Unrecognized custom tools may use generic labels or omit file counts. [Patch request summaries](usage.md#patch-requests) additionally inspect a bounded content format; matching fields do not establish what was actually applied.
 
-Shell-session recognition checks the exact names and the supported direct request schema rather than treating every `exec_command` or `write_stdin` as interchangeable. Unsupported request variants keep generic/native presentation; unknown result metadata omits optional exit facts. Removing the duplicate expanded title also depends on a checked native component slot and falls back to the summary plus original body when that slot is unavailable.
+Shell-session recognition checks the exact names and the supported direct request schema rather than treating every `exec_command` or `write_stdin` as interchangeable. Unsupported request variants keep generic/native presentation; unknown result metadata omits optional exit facts. Expanded calls retain the summary plus original body, as with other tools; provider-hidden bodies are not reconstructed or used to suppress native call identities.
 
 Purpose text depends on the model, provider and tool supporting the intent request. It is discretionary even when supported. A missing purpose is not itself an error; the command or path can still be shown.
 

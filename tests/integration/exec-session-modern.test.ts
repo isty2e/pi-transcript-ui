@@ -27,12 +27,17 @@ it.each(["exec_command", "write_stdin"])("preserves the real Pi 1.2 %s component
   const root = new Container(); const chat = new Container(); root.addChild(chat); chat.addChild(component);
   const dispose = attachTranscriptPresentation(root, { getTheme: () => theme, requestRender: vi.fn() });
   try {
-    for (const width of widths) expect(component.render(width)).toEqual(original.get(width));
+    for (const width of widths) {
+      const rows = component.render(width);
+      expect(rows[0]).toBe("");
+      expect(stripTerminalSequences(rows[1]!)).toMatch(/^▾ /);
+      expect(rows.slice(2)).toEqual(original.get(width));
+    }
     dispose.targets()[0]!.setExpanded(false);
     const compact = stripTerminalSequences(component.render(120).join("\n"));
     expect(compact).toContain(name === "exec_command" ? "Run npm test (exit 7)" : "Check output (exit 7)");
     dispose.targets()[0]!.setExpanded(true);
-    expect(component.render(80)).toEqual(original.get(80));
+    expect(component.render(80).slice(2)).toEqual(original.get(80));
     expect(component.args).toBe(args); expect(component.result).toBe(result); expect(component.toolDefinition).toBe(definition);
   } finally { dispose(); }
   expect(component.render(80)).toEqual(original.get(80));

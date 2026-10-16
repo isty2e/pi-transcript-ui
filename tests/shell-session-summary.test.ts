@@ -1,12 +1,13 @@
 import { expect, it } from "vitest";
-import { shellSummary } from "../src/exec-summary.js";
-import { disclosureLine, joinLine, shellLine } from "../src/display.js";
+import { visibleWidth } from "@earendil-works/pi-tui";
+import { shellSessionSummary } from "../src/shell-session-summary.js";
+import { joinLine, shellSessionLine, targetText } from "../src/display.js";
 
 const schema = (name: string, extras: Record<string, unknown> = {}) => ({ type: "object",
   properties: { [name === "exec_command" ? "cmd" : "session_id"]: { type: name === "exec_command" ? "string" : "number" },
     chars: { type: "string" }, ...extras }, required: [name === "exec_command" ? "cmd" : "session_id"] });
 const summarize = (name = "write_stdin", args: unknown = { session_id: 73 }, details?: unknown, parameters: unknown = schema(name)) =>
-  shellSummary({ toolName: name, parameters, args, result: { details }, isPartial: false });
+  shellSessionSummary({ toolName: name, parameters, args, result: { details }, isPartial: false });
 
 it.each([
   ["conversion/mkaros", { shell: { type: "string" }, login: { type: "boolean" }, tty: { type: "boolean" }, max_output_tokens: { type: "number" } }, {}],
@@ -22,6 +23,16 @@ it("projects common requests without assuming shell language or process lifetime
   expect(summarize("exec_command", { cmd: "npm test", shell: "/bin/fish" })).toEqual({ action: "Run", command: "npm test" });
   for (const chars of [undefined, ""]) expect(summarize("write_stdin", { session_id: 1, chars })).toEqual({ action: "Check output" });
   for (const chars of ["\n", " ", "\u0003", "help\n", "\\x03"]) expect(summarize("write_stdin", { session_id: 1, chars })).toEqual({ action: "Send input" });
+});
+
+it("marks omitted command lines before the whole-script exit code", () => {
+  const summary = summarize("exec_command", { cmd: "cd repo\nrm -rf build\nnpm test" },
+    { output: "", wall_time_seconds: 1, exit_code: 0 })!;
+  expect(joinLine(shellSessionLine(summary, false, false))).toBe("▸ Run cd repo […] (exit 0)");
+});
+
+it.each(["\nnpm test", " \t\nnpm test", "\r\nnpm test"])("refuses an empty first command line: %j", cmd => {
+  expect(summarize("exec_command", { cmd })).toBeUndefined();
 });
 
 it.each([
@@ -60,13 +71,13 @@ it("refuses other input channels rather than treating their missing chars as a p
 });
 
 it("omits exit metadata from partial updates without losing the request", () => {
-  expect(shellSummary({ toolName: "exec_command", parameters: schema("exec_command"), args: { cmd: "npm test" },
+  expect(shellSessionSummary({ toolName: "exec_command", parameters: schema("exec_command"), args: { cmd: "npm test" },
     result: { details: { output: "", wall_time_seconds: 1, exit_code: 0 } }, isPartial: true })).toEqual({ action: "Run", command: "npm test" });
 });
 
 it("refuses unknown names, schema meanings and malformed requests", () => {
   expect(summarize("other", { cmd: "x" })).toBeUndefined();
-  expect(shellSummary({ toolName: "exec_command", parameters: undefined, args: { cmd: "x" }, isPartial: false })).toBeUndefined();
+  expect(shellSessionSummary({ toolName: "exec_command", parameters: undefined, args: { cmd: "x" }, isPartial: false })).toBeUndefined();
   for (const parameters of [{ ...schema("exec_command"), required: [] },
     { ...schema("exec_command"), anyOf: [] }, schema("write_stdin"),
     { type: "object", properties: { cmd: { type: "number" } }, required: ["cmd"] }]) {
@@ -80,11 +91,11 @@ it("refuses unknown names, schema meanings and malformed requests", () => {
 it("keeps opaque commands raw, uncolored, bounded and independent from exit/error status", () => {
   const command = "echo 'quoted' && fish-specific $argv[1]\nsecond command";
   const summary = summarize("exec_command", { cmd: command }, { output: "x", wall_time_seconds: 1, exit_code: 7 })!;
-  const parts = shellLine(summary, false, false, "Check tests", { width: 80 });
+  const parts = shellSessionLine(summary, false, false, "Check tests", { width: 80 });
   expect(joinLine(parts)).toContain("Run echo 'quoted' && fish-specific $argv[1]");
   expect(joinLine(parts)).toContain("(exit 7)");
   expect(parts.command).toBeUndefined();
   expect(joinLine(parts)).not.toContain("— error");
-  expect(joinLine(shellLine(summary, true, false))).toContain("— error");
-  for (const width of [0, 1, 5, 24]) expect(joinLine(disclosureLine("Purpose\nwith control\u001b[31m", { width })).replace(/\u001b\[[0-9;]*m/g, "").length).toBeLessThanOrEqual(Math.max(2, width));
+  expect(joinLine(shellSessionLine(summary, true, false))).toContain("— error");
+  for (const width of [0, 1, 5, 24]) expect(visibleWidth(targetText({ kind: "opaque-command", command }, {}, width))).toBeLessThanOrEqual(width);
 });
