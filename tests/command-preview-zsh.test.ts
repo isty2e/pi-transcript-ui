@@ -44,6 +44,7 @@ it.each([
 it.each([
   "printf '%s' $(repeat 2 printf HIDDEN)\nprintf AFTER",
   "printf '%s' $(printf '%s' $(repeat 2 printf HIDDEN))\nprintf AFTER",
+  "printf '%s' $(printf repeat && repeat 2 printf HIDDEN)\nprintf AFTER",
   "printf '%s' ${values[(r)*]}\nprintf AFTER",
   "printf '%s' **/*.ts(N)\nprintf AFTER",
   "printf '%s' =(printf HIDDEN)\nprintf AFTER",
@@ -52,6 +53,12 @@ it.each([
 ])("keeps one opaque remainder for unsupported zsh syntax: %s", tail => {
   const preview = commandPreview(`npm test\n${tail}`, 120, "zsh");
   expect(preview).toBe("npm test ↵ printf […]");
+});
+
+it.each(["printf repeat", "printf repeat foreach end always noglob nocorrect", "FLAG=ready printf repeat",
+  "printf '%s' $(printf repeat)"])("keeps zsh control words that are ordinary substitution arguments: %s", content => {
+  const source = `npm test\nprintf '%s' $(${content})\ngit status`;
+  expect(commandPreview(source, 120, "zsh")).toBe("npm test ↵ printf '%s' $(…) ↵ git status");
 });
 
 it.each(["EOF", "'EOF'", '"EOF"'])("does not expose a zsh heredoc body for delimiter %s", delimiter => {

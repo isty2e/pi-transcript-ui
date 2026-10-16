@@ -66,6 +66,10 @@ function clip(value: CommandPreviewPlan, width: number): CommandPreviewPlan {
 function substitutionEnd(source: string, start: number, opaqueHeads: ReadonlySet<string>, depth = 1): number | undefined {
   if (depth > 8) return undefined;
   let quote: "'" | '"' | undefined, word = "";
+  let commandHead = true;
+  // Preserve Bash preview parity while distinguishing dialect-only words from arguments.
+  const refused = () => reserved.has(word) || (commandHead && opaqueHeads.has(word));
+
   for (let i = start + 2; i < source.length; i++) {
     const char = source[i]!;
     if (char === "\n") return undefined;
@@ -84,9 +88,11 @@ function substitutionEnd(source: string, start: number, opaqueHeads: ReadonlySet
     if (quote) { word += char; if (char === quote) quote = undefined; continue; }
     if (char === "'" || char === '"') { quote = char; word += char; continue; }
     if ("(<>{}#".includes(char)) return undefined;
-    if (char === ")") return opaqueHeads.has(word) ? undefined : i;
+    if (char === ")") return refused() ? undefined : i;
     if (/[ \t|&;]/.test(char)) {
-      if (opaqueHeads.has(word)) return undefined;
+      if (refused()) return undefined;
+      if (word && !assignment.test(word)) commandHead = false;
+      if ("|&;".includes(char)) commandHead = true;
       word = "";
     } else word += char;
   }
