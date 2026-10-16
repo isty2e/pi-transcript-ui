@@ -12,7 +12,7 @@ it.each([null, true, 1, {}, "Raw", "auto"])("rejects invalid command preview mod
 it("defaults old settings to Compact without changing the supplied object", () => {
   const old = { ...defaultSettings(), display: { rowMaxWidth: 96, commandMaxWidth: 80, intentMaxWidth: 32 } };
   const original = JSON.stringify(old);
-  expect(parseSettings(old).display).toEqual({ ...old.display, commandPreview: 'compact' });
+  expect(parseSettings(old).display).toEqual({ ...old.display, commandPreview: 'compact', toolDuration: true });
   expect(JSON.stringify(old)).toBe(original);
   expect(parseSettings({ ...old, display: { ...old.display, commandPreview: 'raw' } }).display.commandPreview).toBe('raw');
 });

@@ -30,6 +30,24 @@ it("loads old positive-only settings without rewriting intent limits or saved by
   expect(loaded.settings.intent.maxLength).toBe(96);
   expect(await readFile(store.path, "utf8")).toBe(bytes);
 });
+it("defaults missing tool duration to on without rewriting old settings, then preserves explicit off", async () => {
+  const store = await file();
+  const { toolDuration: _omitted, ...display } = defaultSettings().display;
+  const bytes = JSON.stringify({ ...defaultSettings(), display });
+  await writeFile(store.path, bytes);
+
+  const loaded = await store.load();
+  expect(loaded.settings.display.toolDuration).toBe(true);
+  expect(await readFile(store.path, "utf8")).toBe(bytes);
+
+  loaded.settings.display.toolDuration = false;
+  await store.save(loaded.settings, loaded.original);
+  expect((await store.load()).settings.display.toolDuration).toBe(false);
+});
+it.each([undefined, null, "false", "true", 0, 1, {}, []])("rejects a non-boolean tool duration setting: %j", toolDuration => {
+  const settings = defaultSettings();
+  expect(() => parseSettings({ ...settings, display: { ...settings.display, toolDuration } })).toThrow();
+});
 it("saves explicit custom auto-group exclusions, reloads them and cancels without writes", async () => {
   const store = await file();
   const ui = { select: vi.fn().mockResolvedValueOnce("Grouping").mockResolvedValueOnce("Standalone tools — exclude auto-grouping (0)").mockResolvedValueOnce("Back").mockResolvedValueOnce("Cancel"), editor: vi.fn().mockResolvedValue("custom_write"), input: vi.fn(), notify: vi.fn() };

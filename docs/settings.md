@@ -6,7 +6,7 @@ Run `/transcript-ui settings` inside Pi and choose a category:
 
 - **Grouping** — Exploration, Mutation and Standalone tool lists.
 - **Intent** — Purpose text, language and generation length.
-- **Display** — Command preview mode and summary widths.
+- **Display** — Tool duration, command preview mode and summary widths.
 
 Changes stay in one draft as you move between categories. Choose **Back** or press Escape inside a category to return to the main settings menu. Cancelling an individual field editor or chooser returns to its category without changing that option.
 
@@ -58,6 +58,16 @@ Command and intent widths are additional ceilings, not reserved allocations. Spa
 
 To show longer commands, increase the total row and command limits as needed, widen the terminal, or reduce the intent display limit. Purpose text remains at the end of the row.
 
+## Tool duration
+
+| Menu option | JSON key | Default | Values |
+| --- | --- | --- | --- |
+| Tool duration | `display.toolDuration` | On (`true`) | On / Off |
+
+When enabled, individual summaries show Pi's recorded final execution time when available and space permits. The same option applies to codemode, shell sessions, file operations and generic tools. Turning it off hides time on all of these summary rows, not just codemode. See [duration semantics](usage.md#tool-duration).
+
+This option does not alter group headers or the original expanded rendering. Native `Elapsed` or `Took` text can still appear when a tool is expanded. Extension releases predating this option reject its JSON key; remove `display.toolDuration` if reverting to one of those releases.
+
 ## Command preview
 
 | Menu option | JSON key | Default | Values |
@@ -101,7 +111,8 @@ The file is created only when you save. After editing it outside Pi, run `/reloa
     "rowMaxWidth": 120,
     "commandMaxWidth": 120,
     "intentMaxWidth": 48,
-    "commandPreview": "compact"
+    "commandPreview": "compact",
+    "toolDuration": true
   }
 }
 ```

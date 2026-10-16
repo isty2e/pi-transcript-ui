@@ -150,15 +150,15 @@ Pi's native `codemode` tool keeps one parent row, with a compact summary of its 
 ```text
 Code…
 Code read ×2 (2 nested calls so far; 1 running)…
-Code read ×2, bash (3 nested calls; 1.2s)
-Code read, bash (2 nested calls; 1 error; 1.2s)
-Code read, bash — error (2 nested calls; 1 error; 1.2s)
-Code (0 nested calls; 0.4s)
+Code read ×2, bash (3 nested calls) (1.2s)
+Code read, bash (2 nested calls; 1 error) (1.2s)
+Code read, bash — error (2 nested calls; 1 error) (1.2s)
+Code (0 nested calls) (0.4s)
 ```
 
 `×2` counts records with the same name. Up to three names are previewed; `…` can hide additional names, but the total still counts every recorded call. Names are not an execution-order diagram. Nested calls can include model operations such as `models.classify`, not just tools. They do not establish which files changed or how many edits were applied.
 
-While running, `so far` describes the current snapshot, not a planned total. Nested `error` and `cancelled` counts remain separate from the parent's `— error`: a script may catch a child error and finish successfully. Time is Pi's recorded parent execution duration, shown only after completion, not a sum of child durations or a separate live timer.
+While running, `so far` describes the current snapshot, not a planned total. Nested `error` and `cancelled` counts remain separate from the parent's `— error`: a script may catch a child error and finish successfully. Time follows the common [tool duration](#tool-duration) setting and describes the parent, not a sum of child durations.
 
 Missing or unusable call records omit the nested aggregate; they do not become zero. A recorded empty list shows `0 nested calls`. Codemode summaries do not show output-line totals; a group containing codemode also omits the group-wide output-line total. Codemode is standalone by default; explicit grouping settings still apply, and groups count native parents rather than their nested calls.
 
@@ -171,6 +171,20 @@ This support uses Pi's named `codemode` contract with a normalized string `code`
 A known zero is shown as zero. An unavailable count is omitted or marked unknown. On narrow screens, some labels or totals may be clipped; expand the tool to inspect the original result.
 
 Bash summaries do not show output-line totals.
+
+## Tool duration
+
+Completed individual tool summaries show recorded execution time by default, after other metrics and before purpose text:
+
+```text
+Read src/config.ts (12 lines) (0.1s)
+Run npm test (exit 0) (2m 5s) — Verify changes
+Code read ×2 (2 nested calls) (1.2s)
+```
+
+Time comes only from Pi's final `durationMs`, available from Pi 1.1.0. Missing or unusable values, partial results and older saved calls without timing omit it; they do not imply zero. A recorded zero displays as `0.0s`. There is no separate live clock or fallback to provider receipt text. Shell-session time describes that `exec_command` or `write_stdin` invocation, not the lifetime of the process it may leave running. Groups do not sum member times, which can overlap.
+
+Turn **Display → Tool duration** off to hide time on every individual summary, including codemode. The whole timing token is omitted if it cannot fit within the row's fixed content and width limit. The setting does not suppress timing supplied by the original expanded renderer. See the [setting](settings.md#tool-duration).
 
 ## Command previews
 

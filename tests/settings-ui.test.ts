@@ -31,6 +31,7 @@ const cases: readonly {
   { category: "Display", label: "Total row width: 120", input: "99", change: s => { s.display.rowMaxWidth = 99; } },
   { category: "Grouping", label: "Standalone tools — exclude auto-grouping (0)", editor: "external", change: s => { s.grouping.standalone = ["external"]; } },
   { category: "Display", label: "Command preview: Compact", submenu: "Raw", change: s => { s.display.commandPreview = "raw"; } },
+  { category: "Display", label: "Tool duration: on", change: s => { s.display.toolDuration = false; } },
 ];
 
 it.each(cases)("edits only the selected setting through $label, saving only on Save", async entry => {

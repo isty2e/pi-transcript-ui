@@ -11,10 +11,12 @@ A collapsed Read group, an expanded Edit group, [shell-session calls](docs/usage
   ▸ Edit src/defaults.ts (+1 -1) — Adjust defaults
 ▸ Run npm test (exit 0) — Verify changes
 ▸ Check output (exit 0)
-▸ Code read ×2, bash (3 nested calls; 1.2s)
+▸ Code read ×2, bash (3 nested calls) (1.2s)
 ```
 
 Expand an individual call to see its original output. Read groups count files; mutation groups count calls, not unique files. Counts are shown only when usable evidence is available.
+
+Individual summaries show recorded tool duration by default when available. Turn it off under **Display → Tool duration**; the same setting applies to codemode and other tools. See [duration details](docs/usage.md#tool-duration).
 
 ## Install
 

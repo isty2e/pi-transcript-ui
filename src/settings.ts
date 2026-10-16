@@ -35,11 +35,15 @@ export function parseSettings(value: unknown): Settings {
   }
   const display = { ...DEFAULT_DISPLAY_LIMITS };
   if (Object.hasOwn(value, "display")) {
-    if (!isRecord(value.display) || Object.keys(value.display).some((key) => key !== "rowMaxWidth" && key !== "commandMaxWidth" && key !== "intentMaxWidth" && key !== "commandPreview")) throw new Error("Invalid display settings or unknown display key");
+    if (!isRecord(value.display) || Object.keys(value.display).some((key) => key !== "rowMaxWidth" && key !== "commandMaxWidth" && key !== "intentMaxWidth" && key !== "commandPreview" && key !== "toolDuration")) throw new Error("Invalid display settings or unknown display key");
     if (Object.hasOwn(value.display, "commandPreview")) {
       const mode = value.display.commandPreview;
       if (mode !== "compact" && mode !== "raw") throw new Error("Command preview must be compact or raw");
       display.commandPreview = mode;
+    }
+    if (Object.hasOwn(value.display, "toolDuration")) {
+      if (typeof value.display.toolDuration !== "boolean") throw new Error("Tool duration must be boolean");
+      display.toolDuration = value.display.toolDuration;
     }
     for (const key of ["rowMaxWidth", "commandMaxWidth", "intentMaxWidth"] as const) {
       if (!Object.hasOwn(value.display, key)) continue;

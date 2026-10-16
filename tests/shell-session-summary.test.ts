@@ -133,7 +133,7 @@ it("refuses unknown names, schema meanings and malformed requests", () => {
 it("keeps opaque commands raw, uncolored, bounded and independent from exit/error status", () => {
   const command = "echo 'quoted' && fish-specific $argv[1]\nsecond command";
   const summary = summarize("exec_command", { cmd: command }, { output: "x", wall_time_seconds: 1, exit_code: 7 })!;
-  const parts = shellSessionLine(summary, false, false, "Check tests", { width: 80 });
+  const parts = shellSessionLine(summary, false, false, { intent: "Check tests", layout: { width: 80 } });
   expect(joinLine(parts)).toContain("Run echo 'quoted' && fish-specific $argv[1]");
   expect(joinLine(parts)).toContain("(exit 7)");
   expect(parts.command).toBeUndefined();
