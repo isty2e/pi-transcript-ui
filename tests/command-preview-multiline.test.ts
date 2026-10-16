@@ -75,11 +75,13 @@ it("counts known omitted multiline stages and preserves Unicode width limits", (
   }
 });
 
-it("marks multiline budget fallback and incomplete operators", () => {
-  for (const source of ["echo x\n" + "x".repeat(16384), "npm test &&\n", "echo x\r\ngit status"]) {
+it("distinguishes omitted source from incomplete first-line operators", () => {
+  for (const source of ["echo x\n" + "x".repeat(16384), "echo x\r\ngit status"]) {
     expect(commandPreview(source, 80)).toContain("[…]");
     expect(commandPreview(source, 80)).not.toContain("↵");
   }
+  expect(commandPreview("npm test &&\n", 80)).toBe("npm test &&");
+  expect(commandPreviewPlan("npm test &&\n", 80).text).toBe("npm test &&");
 });
 
 it.each(["\n", "\n\n  \n", "\r\n", "\r\n \t\r\n"])("does not claim omitted source for a blank suffix: %j", suffix => {
