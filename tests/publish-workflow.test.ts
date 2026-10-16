@@ -13,6 +13,7 @@ const publicationScripts = workflow.jobs.publish.steps.flatMap(step => step.env?
 const packageVersion = "1.2.3";
 const artifact = "Tested publication artifact";
 const integrity = "sha512-" + createHash("sha512").update(artifact).digest("base64");
+const diagnosticMarker = "PRIVATE_FIXTURE_DIAGNOSTIC_DO_NOT_LOG";
 let directory: string;
 
 beforeEach(async () => {
@@ -32,10 +33,19 @@ require("node:timers/promises").setTimeout = async milliseconds => {
 };
 const childProcess = require("node:child_process");
 const execute = childProcess.execFileSync;
+let timeoutInjected = false;
 childProcess.execFileSync = (command, args, options) => {
   if (command === "npm" && args[0] === "view") {
     appendFileSync(process.env.PUBLICATION_LOOKUP_BOUNDS,
       JSON.stringify({ timeout: options.timeout, killSignal: options.killSignal }) + "\\n");
+    if (process.env.PUBLICATION_SCENARIO === "timeout" && !timeoutInjected) {
+      timeoutInjected = true;
+      throw Object.assign(new Error(process.env.PUBLICATION_DIAGNOSTIC_MARKER), {
+        code: "ETIMEDOUT", status: null, signal: "SIGKILL",
+        stdout: JSON.stringify({ error: { code: "E404", summary: process.env.PUBLICATION_DIAGNOSTIC_MARKER } }),
+        stderr: process.env.PUBLICATION_DIAGNOSTIC_MARKER,
+      });
+    }
   }
   return execute(command, args, options);
 };
@@ -51,13 +61,31 @@ const scenario = process.env.PUBLICATION_SCENARIO;
 if (args[0] === "publish") process.exit(scenario === "publish-failed" ? 1 : 0);
 if (args[0] !== "view") process.exit(2);
 const attempt = calls.filter(call => call[0] === "view").length + 1;
-if (scenario === "unavailable" || (scenario === "delayed" && attempt <= 2) || (scenario === "network" && attempt === 1)
-  || (scenario === "late" && Number(process.env.PUBLICATION_ELAPSED_MS) < 8 * 60 * 1000)) {
-  process.stderr.write(scenario === "network" ? "EAI_AGAIN\\n" : "E404\\n");
+function fail(code) {
+  process.stdout.write(JSON.stringify({ error: { code, summary: process.env.PUBLICATION_DIAGNOSTIC_MARKER,
+    detail: process.env.PUBLICATION_DIAGNOSTIC_MARKER } }));
+  process.stderr.write(process.env.PUBLICATION_DIAGNOSTIC_MARKER);
   process.exit(1);
 }
+if (scenario.startsWith("code:") && attempt === 1) fail(scenario.slice(5));
+if (scenario === "malformed-error" && attempt === 1) {
+  process.stdout.write(process.env.PUBLICATION_DIAGNOSTIC_MARKER);
+  process.stderr.write(process.env.PUBLICATION_DIAGNOSTIC_MARKER);
+  process.exit(1);
+}
+if (scenario === "unavailable" || (scenario === "delayed" && attempt <= 2) || (scenario === "network" && attempt === 1)
+  || (scenario === "late" && Number(process.env.PUBLICATION_ELAPSED_MS) < 8 * 60 * 1000)) {
+  fail(scenario === "network" ? "EAI_AGAIN" : "E404");
+}
 if (scenario === "empty" && attempt === 1) process.exit(0);
-if (scenario === "invalid-json") { process.stdout.write("not JSON"); process.exit(0); }
+if (scenario === "invalid-json" || (scenario === "invalid-json-once" && attempt === 1)) {
+  process.stdout.write(process.env.PUBLICATION_DIAGNOSTIC_MARKER); process.exit(0);
+}
+if (scenario === "non-string" && attempt === 1) {
+  process.stdout.write(JSON.stringify({ value: process.env.PUBLICATION_DIAGNOSTIC_MARKER })); process.exit(0);
+}
+if (scenario === "unsafe-mismatch") { process.stdout.write(JSON.stringify(process.env.PUBLICATION_DIAGNOSTIC_MARKER)); process.exit(0); }
+if (scenario === "empty-string") { process.stdout.write(JSON.stringify("")); process.exit(0); }
 process.stdout.write(JSON.stringify(scenario === "mismatch" ? "sha512-wrong" : process.env.PACKAGE_INTEGRITY));
 `, { mode: 0o755 });
 });
@@ -71,6 +99,7 @@ function executePublication(scenario: string, expectedIntegrity = integrity) {
       encoding: "utf8", timeout: 10000,
       env: { ...process.env, RUNNER_TEMP: directory, PACKAGE_VERSION: packageVersion, PACKAGE_INTEGRITY: expectedIntegrity,
         PUBLICATION_CALLS: join(directory, "calls.jsonl"), PUBLICATION_SCENARIO: scenario,
+        PUBLICATION_DIAGNOSTIC_MARKER: diagnosticMarker,
         PUBLICATION_WAITS: join(directory, "waits.jsonl"), PUBLICATION_LOOKUP_BOUNDS: join(directory, "lookup-bounds.jsonl"),
         PUBLICATION_ELAPSED_MS: "0", PATH: `${join(directory, "bin")}:${process.env.PATH}`,
         NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import=${join(directory, "fast-time.mjs")}`].filter(Boolean).join(" "),
@@ -118,6 +147,47 @@ it.each([["delayed", 3], ["network", 2], ["empty", 2]] as const)("retries only l
     "--registry=https://registry.npmjs.org/", "--fetch-retries=0", "--fetch-timeout=15000"]);
 });
 
+it.each(["E404", "E401", "E403", "E429", "E503", "EAI_AGAIN", "ECONNREFUSED", "ENEEDAUTH"])(
+  "reports safe structured npm code %s without copying the response or stderr", async code => {
+    const result = executePublication(`code:${code}`);
+    expect(result.status).toBe(0);
+    expect(result.output).toContain(`command; code=${code}; exit=1`);
+    expect(result.output).not.toContain(diagnosticMarker);
+    expect((await calls()).map(command => command[0])).toEqual(["publish", "view", "view"]);
+    expect((await verificationTiming()).waits).toEqual([30000]);
+  },
+);
+
+it.each([`code:${diagnosticMarker}`, `code:E404\n${diagnosticMarker}`, "code:E404\n", "code:E404\r", "malformed-error"])(
+  "keeps unsupported or malformed command diagnostics opaque: %s", async scenario => {
+    const result = executePublication(scenario);
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("command; code=unknown; exit=1");
+    expect(result.output).not.toContain(diagnosticMarker);
+    expect((await calls()).map(command => command[0])).toEqual(["publish", "view", "view"]);
+  },
+);
+
+it.each([["empty", "empty-output"], ["invalid-json-once", "invalid-json"], ["non-string", "unusable-metadata"]] as const)(
+  "distinguishes the %s response phase without exposing its contents", async (scenario, stage) => {
+    const result = executePublication(scenario);
+    expect(result.status).toBe(0);
+    expect(result.output).toContain(`failed (${stage})`);
+    expect(result.output).not.toContain(diagnosticMarker);
+    expect((await calls()).map(command => command[0])).toEqual(["publish", "view", "view"]);
+  },
+);
+
+it("reports the native timeout ahead of a conflicting partial npm response without republishing", async () => {
+  const result = executePublication("timeout");
+  expect(result.status).toBe(0);
+  expect(result.output).toContain("command; code=ETIMEDOUT; exit=unknown");
+  expect(result.output).not.toContain("code=E404");
+  expect(result.output).not.toContain(diagnosticMarker);
+  expect((await calls()).filter(command => command[0] === "publish")).toHaveLength(1);
+  expect((await verificationTiming()).lookups).toHaveLength(2);
+});
+
 it("accepts registry visibility after eight minutes without republishing", async () => {
   expect(executePublication("late").status).toBe(0);
   const commands = await calls();
@@ -147,8 +217,11 @@ it("budgets ten minutes of polling and capped lookups within the publish job", a
   expect(configuredBudget + 3 * 60 * 1000).toBeLessThanOrEqual(workflow.jobs.publish["timeout-minutes"] * 60 * 1000);
 });
 
-it("fails an integrity mismatch immediately without retrying publication or the lookup", async () => {
-  expect(executePublication("mismatch").status).not.toBe(0);
+it.each(["mismatch", "unsafe-mismatch", "empty-string"])("fails %s immediately without retrying or exposing the response", async scenario => {
+  const result = executePublication(scenario);
+  expect(result.status).not.toBe(0);
+  expect(result.output).toContain("Published integrity differs from the tested artifact");
+  expect(result.output).not.toContain(diagnosticMarker);
   expect((await calls()).map(command => command[0])).toEqual(["publish", "view"]);
   expect((await verificationTiming()).waits).toEqual([]);
 });
