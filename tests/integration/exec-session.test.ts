@@ -31,7 +31,7 @@ it.each(["exec_command", "write_stdin"] as const)("summarizes %s without receipt
   const dispose = attachTranscriptPresentation(root, { getTheme: () => theme, requestRender: vi.fn() });
   try {
     const text = stripTerminalSequences(chat.render(120).join("\n"));
-    expect(text).toContain(name === "exec_command" ? "Run npm test (exit 7)" : "Check output (exit 7)");
+    expect(text).toContain(name === "exec_command" ? "Ran npm test (exit 7)" : "Checked output (exit 7)");
     expect(text).not.toContain("3 lines");
     expect(text).not.toContain("73");
     expect(tool.args).toBe(args);
@@ -57,7 +57,8 @@ it.each(["exec_command", "write_stdin"] as const)("keeps a spaced purpose summar
       const lines = chat.render(120);
       expect(stripTerminalSequences(lines[0]!).trimEnd()).toBe("Previous message");
       expect(lines[1]).toBe("");
-      expect(stripTerminalSequences(lines[2]!)).toContain(name === "exec_command" ? "▾ Run npm test" : "▾ Check output");
+      expect(stripTerminalSequences(lines[2]!)).toContain(name === "exec_command"
+        ? `▾ ${phase === "done" ? "Ran" : "Run"} npm test` : `▾ ${phase === "done" ? "Checked output" : "Check output"}`);
       expect(stripTerminalSequences(lines[2]!)).toContain("Run the test suite");
       expect(lines[3]).toBe("");
       expect(lines.slice(3)).toEqual(native);
@@ -94,6 +95,8 @@ it.each(["dark", "light"])("keeps the summary, complete Native body and folding 
       const { root, chat } = nativeTranscript(); chat.addChild(tool);
       const dispose = attachTranscriptPresentation(root, { getTheme: () => theme, requestRender: vi.fn(),
         ...(phase === "intent" ? { resolveIntent: () => "Checking tests" } : {}) });
+      const label = name === "exec_command" ? `${phase === "pending" ? "Run" : phase === "partial" ? "Running" : "Ran"} npm test`
+        : phase === "pending" ? "Send input" : phase === "partial" ? "Sending input" : "Sent input";
       try {
         for (const width of widths) {
           const rows = tool.render(width);
@@ -103,7 +106,7 @@ it.each(["dark", "light"])("keeps the summary, complete Native body and folding 
           expect(rows.slice(2)).toEqual(native);
         }
         const lines = tool.render(120);
-        expect(stripTerminalSequences(lines[1]!)).toContain(name === "exec_command" ? "▾ Run npm test" : "▾ Send input");
+        expect(stripTerminalSequences(lines[1]!)).toContain(`▾ ${label}`);
         const y = lines.findIndex(line => stripTerminalSequences(line).trim());
         const event = { type: "click" as const, button: "left" as const, x: 4, y, screenX: 4, screenY: y, width: 120, height: lines.length,
           shift: false, alt: false, ctrl: false };
@@ -112,7 +115,7 @@ it.each(["dark", "light"])("keeps the summary, complete Native body and folding 
         const nav = new ToolNavigation(() => dispose.targets());
         nav.act("right"); expect(tool.expanded).toBe(true);
         nav.act("left"); expect(tool.expanded).toBe(false);
-        expect(stripTerminalSequences(tool.render(120).join("\n"))).toContain(name === "exec_command" ? "Run npm test" : "Send input");
+        expect(stripTerminalSequences(tool.render(120).join("\n"))).toContain(label);
         expect(tool.args).toBe(args); expect(tool.toolDefinition).toBe(def);
         if (phase !== "pending") expect(tool.result).toBe(result);
       } finally { dispose(); }
@@ -139,9 +142,9 @@ it("keeps established file capabilities ahead of a same-named shell request", ()
   const dispose = attachTranscriptPresentation(root, { getTheme: () => theme, requestRender: vi.fn() });
   try {
     const text = stripTerminalSequences(tool.render(120).join("\n"));
-    expect(text).toContain("Write result.txt");
+    expect(text).toContain("Wrote result.txt");
     expect(text).toContain("2 lines");
-    expect(text).not.toContain("Run npm test");
+    expect(text).not.toContain("Ran npm test");
     expect(def.execute).not.toHaveBeenCalled();
   } finally { dispose(); }
 });
@@ -186,12 +189,12 @@ it.each(["bash", "zsh"])("rechecks explicit %s preview evidence and Raw selectio
     args.shell = "/bin/zsh";
     args.cmd = "npm test\nrepeat 2 do\nprintf HIDDEN\ndone\nprintf AFTER";
     tool.updateArgs(args);
-    expect(header()).toContain("Run npm test ↵ repeat […]");
+    expect(header()).toContain("Ran npm test ↵ repeat […]");
     expect(header()).not.toMatch(/HIDDEN|AFTER/);
     args.shell = `/bin/${shell}`;
     args.cmd = "npm test\nprintf x >>| REDIRECTION_TARGET\nprintf AFTER";
     tool.updateArgs(args);
-    expect(header()).toContain("Run npm test ↵ printf […]");
+    expect(header()).toContain("Ran npm test ↵ printf […]");
     expect(header()).not.toMatch(/REDIRECTION_TARGET|AFTER/);
     args.cmd = command;
 
@@ -235,16 +238,16 @@ it("reevaluates blank and multiline exec requests while retaining the full nativ
   const dispose = attachTranscriptPresentation(root, { getTheme: () => theme, requestRender: vi.fn() });
   try {
     const text = () => stripTerminalSequences(tool.render(120).join("\n"));
-    expect(text()).not.toContain("Run");
+    expect(text()).not.toMatch(/\b(?:Run|Running|Ran)\b/);
     args.cmd = "cd repo\nrm -rf build\nnpm test"; tool.updateArgs(args);
-    expect(text()).toContain("Run cd repo […] (exit 0)");
+    expect(text()).toContain("Ran cd repo […] (exit 0)");
     expect(text()).not.toContain("rm -rf build");
     dispose.targets()[0]!.setExpanded(true);
     expect(text()).toContain("rm -rf build");
     expect(text()).toContain("npm test");
     dispose.targets()[0]!.setExpanded(false);
     args.cmd = "\r\nnpm test"; tool.updateArgs(args);
-    expect(text()).not.toContain("Run");
+    expect(text()).not.toMatch(/\b(?:Run|Running|Ran)\b/);
     expect(def.execute).not.toHaveBeenCalled();
   } finally { dispose(); }
 });
@@ -319,7 +322,7 @@ it.each(["exec_command", "write_stdin"] as const)("keeps incomplete required %s 
   try {
     dispose.targets()[0]!.setExpanded(true);
     const text = () => stripTerminalSequences(chat.render(120).join("\n"));
-    const label = name === "exec_command" ? "Run npm test" : "Check output";
+    const label = name === "exec_command" ? "Ran npm test" : "Checked output";
     expect(text()).toContain("(3 lines)");
     expect(text()).not.toContain(label);
 

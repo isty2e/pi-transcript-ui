@@ -51,9 +51,9 @@ function setup(def: ToolDefinition | null = definition(), args?: unknown) {
 describe("actual ToolExecutionComponent differential rendering", () => {
   it("uses family labels for arbitrary or mixed operations instead of inventing file work", () => {
     for (const [names, family, label] of [
-      [["mcp__any", "mcp__other"], "exploration", "Exploration"],
-      [["read", "mcp__any"], "exploration", "Exploration"],
-      [["read", "grep"], "exploration", "Exploration"],
+      [["mcp__any", "mcp__other"], "exploration", "Explored"],
+      [["read", "mcp__any"], "exploration", "Explored"],
+      [["read", "grep"], "exploration", "Explored"],
       [["edit", "mcp__any"], "mutation", "Mutation"],
     ] as const) {
       const settings = defaultSettings(); settings.grouping[family] = [...names];

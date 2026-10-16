@@ -53,11 +53,11 @@ describe("row lines", () => {
 
   it("builds running and settled lines in our wording", () => {
     const display = displayFor("read", { path: "f.txt" })!;
-    expect(joinLine(runningLine("read", display))).toBe("▸ Read f.txt…");
+    expect(joinLine(runningLine("read", display))).toBe("▸ Reading f.txt…");
     expect(joinLine(settledLine({ toolName: "read", display, content, isError: false, metrics: NO_SUMMARY_METRICS }))).toBe("▸ Read f.txt (3 lines)");
     expect(joinLine(settledLine({ toolName: "read", display, content, isError: true, metrics: NO_SUMMARY_METRICS }))).toBe("▸ Read f.txt — error (3 lines)");
     expect(joinLine(settledLine({ toolName: "grep", display: displayFor("grep", { pattern: "p" }), content, isError: false, metrics: NO_SUMMARY_METRICS }))).toBe(
-      '▸ Search "p" (3 matches)',
+      '▸ Searched "p" (3 matches)',
     );
   });
 
@@ -92,7 +92,7 @@ describe("intent suffix", () => {
       "▸ Read f.txt (2 lines) — Check setup",
     );
     expect(joinLine(settledLine({ toolName: "read", display, content, isError: false, metrics: NO_SUMMARY_METRICS }))).toBe("▸ Read f.txt (2 lines)");
-    expect(joinLine(runningLine("read", display, "Check setup"))).toBe("▸ Read f.txt — Check setup…");
+    expect(joinLine(runningLine("read", display, "Check setup"))).toBe("▸ Reading f.txt — Check setup…");
   });
 });
 

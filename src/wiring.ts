@@ -15,6 +15,7 @@ import { createCommandColorizer } from "./shell-colors.js";
 import { codemodeSummary } from "./codemode-summary.js";
 import { shellSessionSummary } from "./shell-session-summary.js";
 import { toolDurationMs } from "./tool-duration.js";
+import { toolPhase, type ToolPhase } from "./tool-phase.js";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 
 export interface RowTheme {
@@ -34,6 +35,7 @@ export interface NativeToolComponent extends Component {
   result?: { content?: unknown; isError?: boolean; details?: unknown; durationMs?: unknown };
   expanded: boolean;
   isPartial: boolean;
+  readonly executionStarted?: boolean;
   updateDisplay(): void;
   setExpanded(expanded: boolean): void;
   updateArgs(args: unknown): void;
@@ -58,11 +60,15 @@ function isTool(value: Component): value is NativeToolComponent {
     typeof c.addChild === "function" && typeof c.removeChild === "function" && typeof c.clear === "function" && Array.isArray(c.children);
 }
 
-function shellSessionFor(tool: NativeToolComponent, capabilities: FileCapabilities) {
+function phaseFor(tool: NativeToolComponent): ToolPhase {
+  return toolPhase({ hasResult: Boolean(tool.result), isPartial: tool.isPartial, executionStarted: tool.executionStarted === true });
+}
+
+function shellSessionFor(tool: NativeToolComponent, capabilities: FileCapabilities, phase: ToolPhase) {
   if (tool.toolName !== "exec_command" && tool.toolName !== "write_stdin") return undefined;
   if (capabilities.mutation || capabilities.read || capabilities.patch) return undefined;
   return shellSessionSummary({ toolName: tool.toolName, parameters: tool.toolDefinition?.parameters, args: tool.args,
-    result: tool.result, isPartial: !tool.result || tool.isPartial });
+    result: tool.result, isPartial: phase !== "settled" });
 }
 
 interface NativeAssistantComponent extends Component {
@@ -163,15 +169,16 @@ class ToolGroup extends SummaryRow implements DisclosureTarget {
     const members = this.members.map(tool => {
       const classification = this.classifications.get(tool)!;
       const capabilities = this.getCapability(tool) ?? { mutation: undefined, read: undefined };
+      const phase = phaseFor(tool);
       return {
         toolName: tool.toolName,
         classification,
         capabilities,
-        shellSession: shellSessionFor(tool, capabilities) !== undefined,
-        settled: Boolean(tool.result && !tool.isPartial),
+        shellSession: shellSessionFor(tool, capabilities, phase) !== undefined,
+        phase,
         isError: tool.result?.isError === true,
         metrics: summaryMetrics({ toolName: tool.toolName, args: tool.args, result: tool.result,
-          isPartial: tool.isPartial, classification, capabilities }),
+          isPartial: phase !== "settled", classification, capabilities }),
       };
     });
     const input = { classification: this.classification, members, expanded: this.expanded };
@@ -243,19 +250,20 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
     const indent = group && group.members.length > 1 ? "  " : "";
     const layout = { limits: options.displayLimits ?? DEFAULT_DISPLAY_LIMITS, ...(width === undefined ? {} : { width: Math.max(0, width - indent.length) }) };
     const display = displayFor(tool.toolName, tool.args, capability, capabilities.read, capabilities.patch);
+    const phase = phaseFor(tool);
     const intent = options.resolveIntent ? options.resolveIntent(tool.toolCallId, tool.args) : intentFromArgs(tool.args);
-    const shellSession = shellSessionFor(tool, capabilities);
+    const shellSession = shellSessionFor(tool, capabilities, phase);
     const code = display === null ? codemodeSummary({ toolName: tool.toolName, args: tool.args,
-      result: tool.result, isPartial: !tool.result || tool.isPartial }) : undefined;
+      result: tool.result, phase }) : undefined;
     const context = { intent, layout, durationMs: toolDurationMs(tool.result, tool.isPartial) };
-    const parts = shellSession ? shellSessionLine(shellSession, tool.result?.isError === true, !tool.result || tool.isPartial, context)
+    const parts = shellSession ? shellSessionLine(shellSession, tool.result?.isError === true, phase, context)
       : code ? codemodeLine({ summary: code, isError: tool.result?.isError === true, ...context })
-      : tool.result && !tool.isPartial
-      ? settledLine({ toolName: tool.toolName, display, content: tool.result.content,
-        isError: tool.result.isError === true, ...context,
+      : phase === "settled"
+      ? settledLine({ toolName: tool.toolName, display, content: tool.result?.content,
+        isError: tool.result?.isError === true, ...context,
         metrics: summaryMetrics({ toolName: tool.toolName, args: tool.args, result: tool.result,
-          isPartial: tool.isPartial, classification, capabilities }) })
-      : runningLine(tool.toolName, display, intent, layout);
+          isPartial: false, classification, capabilities }) })
+      : runningLine(tool.toolName, display, intent, layout, phase);
     if (tool.result?.isError === true || !parts.command) colorizer?.clear();
     return `${indent}${styleLine(options.getTheme(), { ...parts, marker: tool.expanded ? "▾" : "▸" }, tool.result?.isError === true, colorCommand)}`;
   }, options.displayLimits?.rowMaxWidth);

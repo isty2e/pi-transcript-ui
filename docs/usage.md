@@ -55,6 +55,10 @@ Available purpose text is retained when the session is reloaded. See [intent set
 
 Counts depend on the tool and available result. There are no separate metric on/off settings.
 
+Recognized action labels track the call's phase: `Run` before execution is confirmed, `Running` during execution and `Ran` once a final result is available. The same rule gives `Reading` / `Read`, `Writing` / `Wrote`, `Patching` / `Patched` and `Exploring` / `Explored`. Unknown activity keeps a neutral label; an old call is not assumed to be running merely because its session was reopened.
+
+Completed tense records that a call ended, not that it succeeded. Failed calls keep the same completed verb with the existing error color and marker; group failures retain their separate failed count. Requested changes remain requests, and finishing an exec or input call does not establish process exit or application acknowledgement. Unrecognized tool names and titles inside original expanded output are unchanged.
+
 ### Read
 
 Read counts describe returned text, not the full size of a file or the requested line limit.
@@ -74,8 +78,8 @@ Read 3 files — 1 failed (partial 2/3: 420 lines)
 ### Write
 
 ```text
-Write notes.txt (42 lines)
-Write empty.txt (0 lines)
+Wrote notes.txt (42 lines)
+Wrote empty.txt (0 lines)
 ```
 
 A successful content write shows the size of the submitted text. A final newline does not add an extra line. This is not a change count: writing 42 lines may replace an existing file rather than add 42 new lines.
@@ -85,7 +89,7 @@ Failed or unfinished writes do not show this count. Custom writers that cannot b
 ### Edit and mutation groups
 
 ```text
-Edit src/config.ts (+2 -1)
+Edited src/config.ts (+2 -1)
 ```
 
 `+2 -1` means two added and one removed line in an available, complete single-file patch. When no reliable patch is available, the change count is omitted.
@@ -99,12 +103,12 @@ Recognized edit/write/patch groups use `Editing` while running and `Edited` once
 Compatible patch inputs are recognized by their declared fields and content, without a provider registry. One native call still owns its original result and expanded output.
 
 ```text
-Patch src/config.ts (requested +2 -1)
-Patch old.ts → new.ts (requested +0 -0)
-Patch 2 targets (requested +3 -1)
-Patch old.ts (requested)
+Patched src/config.ts (requested +2 -1)
+Patched old.ts → new.ts (requested +0 -0)
+Patched 2 targets (requested +3 -1)
+Patched old.ts (requested)
 Edited 2 calls (requested 3 targets: +3 -1)
-Patch src/config.ts — error (requested +2 -1)
+Patched src/config.ts — error (requested +2 -1)
 ```
 
 **`requested` describes input, not confirmed filesystem changes.** Counts remain requests while running, after success or after failure; the native result determines the call's error marker. Context lines do not count as additions or removals. Deletions do not include the old contents, so a request containing a deletion omits the entire `+/-` total rather than reporting zero removed lines.
@@ -118,26 +122,26 @@ Recognition covers bounded direct object schemas and either:
 
 LF and CRLF are accepted. Recognition is limited to 65,536 UTF-16 units per payload, 4,096 lines, 256 target entries and 4,096 units per path. Ambiguous fields, incomplete envelopes, unsupported syntax or schemas, control-bearing paths, ambiguous whitespace around envelope paths and oversized inputs use the existing fallback. A later argument update can establish or revoke recognition and regroup adjacent calls. Explicit grouping preferences still take precedence.
 
-This is not a patch-applicability validator or proof that the tool mutates files. Custom tools using the same shape for another purpose can override grouping in settings. Alternate Create/Edit envelope dialects, lenient unprefixed bodies, schema references/compositions, freeform transports, provider-specific applied receipts and phase outcomes are outside this support. No files are read to reconstruct missing counts.
+This is not a patch-applicability validator or proof that the tool mutates files. Custom tools using the same shape for another purpose can override grouping in settings. Alternate Create/Edit envelope dialects, lenient unprefixed bodies, schema references/compositions, freeform transports, provider-specific applied receipts and phase metadata are outside this support. No files are read to reconstruct missing counts.
 
 ### Shell sessions
 
 Compatible `exec_command` and `write_stdin` calls use request-oriented summaries:
 
 ```text
-Run npm test
-Run npm test (exit 7)
-Check output
-Send input
+Ran npm test
+Ran npm test (exit 7)
+Checked output
+Sent input
 ```
 
 Recognition requires the exact tool name and a bounded direct object schema: required string `cmd` for `exec_command`, or required numeric `session_id` and declared string `chars` for `write_stdin`. Every declared required field must be present with a defined value before recognition; missing fields are not filled from schema defaults.
 
 An `exec_command` call can use a Bash or zsh preview when the tool declares a string `shell` field and the call explicitly supplies an executable whose final filename is `bash`, `bash.exe`, `zsh` or `zsh.exe`. Installation directories do not matter: `/usr/local/bin/bash`, `/opt/homebrew/bin/zsh` and `C:\Program Files\Git\bin\bash.exe` qualify. **Command preview** still selects Compact or Raw; see the [preview rules](#command-previews) for supported syntax and colors. This recognizes the supported single-executable request contract, not the contents of a binary. Shell command lines such as `zsh -fc` are not decoded.
 
-Other commands keep an unparsed first-line preview without shell colors. An omitted shell is not inferred from platform defaults, settings or the environment; fish, sh and PowerShell are not treated as Bash or zsh. Non-whitespace source on later lines adds `[…]` when space permits: `Run cd repo […] (exit 0)`. Trailing blank or whitespace-only lines do not add the marker. A blank first line uses generic/native presentation instead of an empty `Run` label. The exit code describes the whole call, not just the displayed line.
+Other commands keep an unparsed first-line preview without shell colors. An omitted shell is not inferred from platform defaults, settings or the environment; fish, sh and PowerShell are not treated as Bash or zsh. Non-whitespace source on later lines adds `[…]` when space permits: `Ran cd repo […] (exit 0)`. Trailing blank or whitespace-only lines do not add the marker. A blank first line uses generic/native presentation instead of an empty command label. The exit code describes the whole call, not just the displayed line.
 
-For the supported plain-string input contract, omitting optional `chars` or providing an empty string means `Check output`; any nonempty string, including whitespace or control input, means `Send input`. The summary does not echo the input or show a session ID. Nonempty binary input, unknown input fields, ambiguous defaults, unsupported schemas and malformed summary inputs keep the existing generic/native presentation. This is not a decoder for provider-specific input formats.
+For the supported plain-string input contract, omitting optional `chars` or providing an empty string selects `Checking output` / `Checked output`; any nonempty string, including whitespace or control input, selects `Sending input` / `Sent input`. The summary does not echo the input or show a session ID. Nonempty binary input, unknown input fields, ambiguous defaults, unsupported schemas and malformed summary inputs keep the existing generic/native presentation. This is not a decoder for provider-specific input formats.
 
 An exit code appears only after the call settles and supported result metadata supplies it. Recognized receipt shapes use `output` and `wall_time_seconds` with `exit_code`, `chunkId` and `wallTimeSeconds` with `exitCode`, or matching `tool`, `status: "exited"`, `output` and `durationMs` with `exitCode`. Missing, malformed or conflicting codes are omitted, not treated as success. Exit codes do not determine the native `— error` marker, and the summary does not infer whether a process is still running. Recognized shell summaries omit output-line totals; a group containing one also omits the group-wide output-line total. Groups still count native calls.
 
@@ -151,11 +155,11 @@ Pi's native `codemode` tool keeps one parent row, with a compact summary of its 
 
 ```text
 Code…
-Code read ×2 (2 nested calls so far; 1 running)…
-Code read ×2, bash (3 nested calls) (1.2s)
-Code read, bash (2 nested calls; 1 error) (1.2s)
-Code read, bash — error (2 nested calls; 1 error) (1.2s)
-Code (0 nested calls) (0.4s)
+Running code read ×2 (2 nested calls so far; 1 running)…
+Ran code read ×2, bash (3 nested calls) (1.2s)
+Ran code read, bash (2 nested calls; 1 error) (1.2s)
+Ran code read, bash — error (2 nested calls; 1 error) (1.2s)
+Ran code (0 nested calls) (0.4s)
 ```
 
 `×2` counts records with the same name. Up to three names are previewed; `…` can hide additional names, but the total still counts every recorded call. Names are not an execution-order diagram. Nested calls can include model operations such as `models.classify`, not just tools. They do not establish which files changed or how many edits were applied.
@@ -180,8 +184,8 @@ Completed individual tool summaries show recorded execution time by default, aft
 
 ```text
 Read src/config.ts (12 lines) (0.1s)
-Run npm test (exit 0) (2m 5s) — Verify changes
-Code read ×2 (2 nested calls) (1.2s)
+Ran npm test (exit 0) (2m 5s) — Verify changes
+Ran code read ×2 (2 nested calls) (1.2s)
 ```
 
 Time comes only from Pi's final `durationMs`, available from Pi 1.1.0. Missing or unusable values, partial results and older saved calls without timing omit it; they do not imply zero. A recorded zero displays as `0.0s`. There is no separate live clock or fallback to provider receipt text. Shell-session time describes that `exec_command` or `write_stdin` invocation, not the lifetime of the process it may leave running. Groups do not sum member times, which can overlap.
@@ -195,7 +199,7 @@ In **Compact** mode, long or multiline Bash commands and recognized zsh requests
 For example, three lines containing `set -euo pipefail`, `npm test` and `git diff --check` can appear as:
 
 ```text
-Run set -euo pipefail ↵ npm test ↵ git diff --check
+Ran set -euo pipefail ↵ npm test ↵ git diff --check
 ```
 
 Shell settings such as `set` are displayed as ordinary commands, not hidden or classified as setup.
@@ -228,14 +232,14 @@ git status
 With enough space, the preview is:
 
 ```text
-Run cd foo && python […] | grep -i "bar" ↵ git status
+Ran cd foo && python […] | grep -i "bar" ↵ git status
 ```
 
 Compact recognizes `<<` and `<<-` after a command name, with nonempty delimiter names made of letters `A–Z`/`a–z`, digits, `_`, `.`, `+` or `-`, either bare or entirely single- or double-quoted. Multiple heredocs are consumed in declaration order. Closing delimiters must occupy a whole logical line; `<<-` permits leading tabs, not spaces. For unquoted delimiters, backslash-newline continuations are joined before checking the closing delimiter. Body text and closing delimiters never count as outer commands. The preview does not evaluate body expansions.
 
 Compact does not fully parse shell scripts. Here-strings (`<<<`), heredocs inside command substitutions, redirections before the command name, output-redirection forms such as `>|` and `>>|`, other delimiter spellings, quoted newlines and other unsupported syntax remain out of scope. These cases, or an unconfirmed heredoc boundary, retain earlier recognized commands followed by one opaque remainder such as `python […]`; scanning does not resume beyond that remainder. This conservative boundary avoids presenting body text as commands. Unsupported initial single-line syntax and commands too large to compact use a first-line preview; multiline fallback also marks omitted content with `[…]`.
 
-Zsh supports common chains, quotes, continuations and the bounded heredocs above, not the full language or runtime alias/option expansion. When shortening, zsh-specific control forms such as `repeat` and `foreach`, and modifiers such as `noglob` and `nocorrect`, keep one opaque remainder rather than displaying their bodies as separate commands. For example, a recognized `npm test` followed by a multiline `repeat` loop can appear as `Run npm test ↵ repeat […]`. Zsh is not passed through the Bash syntax-color path.
+Zsh supports common chains, quotes, continuations and the bounded heredocs above, not the full language or runtime alias/option expansion. When shortening, zsh-specific control forms such as `repeat` and `foreach`, and modifiers such as `noglob` and `nocorrect`, keep one opaque remainder rather than displaying their bodies as separate commands. For example, a recognized `npm test` followed by a multiline `repeat` loop can appear as `Ran npm test ↵ repeat […]`. Zsh is not passed through the Bash syntax-color path.
 
 Raw and PowerShell previews show the first line without interpreting its syntax. If later lines contain non-whitespace source, `[…]` indicates omission when space permits; trailing blank or whitespace-only lines do not add it. CRLF separators do not appear as extra spaces. The marker itself may be clipped at very narrow widths. PowerShell always uses this form.
 

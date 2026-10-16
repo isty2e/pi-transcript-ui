@@ -23,7 +23,7 @@ it("does not acquire path identities or output counts for a Bash group", () => {
     getTheme: () => ({ bold: text => text, fg: (_style, text) => text }),
   });
   try {
-    expect(stripTerminalSequences(chat.render(120).join("\n"))).toBe("\n▸ Exploration 2 calls");
+    expect(stripTerminalSequences(chat.render(120).join("\n"))).toBe("\n▸ Explored 2 calls");
     expect(pathRead).not.toHaveBeenCalled();
     expect(textRead).not.toHaveBeenCalled();
   } finally {

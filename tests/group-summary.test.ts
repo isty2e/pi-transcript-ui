@@ -9,7 +9,7 @@ const writer = { pathKey: "path", action: "Write", shape: "content" } as const;
 function readMember(path: string, lines: number): GroupMemberSummary {
   return {
     toolName: "read", classification: classifyTool("read"), capabilities: { read: reader, mutation: undefined },
-    settled: true, isError: false, readPath: path, outputLines: 100, shellSession: false,
+    phase: "settled", isError: false, readPath: path, outputLines: 100, shellSession: false,
     metrics: { ...NO_SUMMARY_METRICS, read: { kind: "known", value: { lines, source: "body" } } },
   };
 }
@@ -35,7 +35,7 @@ it("uses patch sums, not Write sizes, in a mixed capability group", () => {
   const mutation = classifyTool("write", null, writer);
   const write: GroupMemberSummary = {
     toolName: "write", classification: mutation, capabilities: { mutation: writer, read: undefined },
-    settled: true, isError: false, readPath: undefined, outputLines: 100, shellSession: false,
+    phase: "settled", isError: false, readPath: undefined, outputLines: 100, shellSession: false,
     metrics: { ...NO_SUMMARY_METRICS, written: { kind: "known", value: 200 }, patch: { kind: "known", value: { added: 1, removed: 1 } } },
   };
   const parts = summarize([write, readMember("same", 5)], mutation);
@@ -46,7 +46,7 @@ it("uses patch sums, not Write sizes, in a mixed capability group", () => {
 });
 
 it("does not treat a partial error as a settled group failure", () => {
-  const partial = { ...readMember("other", 0), settled: false, isError: true, metrics: { ...NO_SUMMARY_METRICS, read: { kind: "unavailable" } as const } };
+  const partial = { ...readMember("other", 0), phase: "running" as const, isError: true, metrics: { ...NO_SUMMARY_METRICS, read: { kind: "unavailable" } as const } };
   const parts = summarize([readMember("same", 2), partial], classifyTool("read"), true);
   expect(joinLine(parts)).toBe("▾ Reading 2 files (partial 1/2: 2 lines)…");
   expect(parts.failure).toBeUndefined();
@@ -69,14 +69,14 @@ it("omits the whole output-line total for codemode mixed with another generic ex
   const diagnostic: GroupMemberSummary = {
     toolName: "diagnostic", classification: classifyTool("diagnostic", rules),
     capabilities: { read: undefined, mutation: undefined }, metrics: NO_SUMMARY_METRICS,
-    settled: true, isError: false, readPath: undefined, outputLines: 7, shellSession: false,
+    phase: "settled", isError: false, readPath: undefined, outputLines: 7, shellSession: false,
   };
   const code = { ...diagnostic, toolName: "codemode", classification: classifyTool("codemode", rules), outputLines: 4 };
   const input = { classification: diagnostic.classification, members: [code, diagnostic], expanded: false };
   expect(groupSummaryRequirements(input).outputLines).toBe(false);
-  expect(joinLine(groupSummary(input))).toBe("▸ Exploration 2 calls");
+  expect(joinLine(groupSummary(input))).toBe("▸ Explored 2 calls");
 
   const withoutCode = { ...input, members: [diagnostic, diagnostic] };
   expect(groupSummaryRequirements(withoutCode).outputLines).toBe(true);
-  expect(joinLine(groupSummary(withoutCode))).toBe("▸ Exploration 2 calls (14 lines)");
+  expect(joinLine(groupSummary(withoutCode))).toBe("▸ Explored 2 calls (14 lines)");
 });

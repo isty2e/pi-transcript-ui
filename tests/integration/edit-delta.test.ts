@@ -23,7 +23,7 @@ it.each(["dark", "light"])("uses actual edit results and %s theme without changi
     const chat = new Container(), root = new Container(); chat.addChild(tool); root.addChild(chat);
     dispose = attachTranscriptPresentation(root, { getTheme: () => theme, requestRender: vi.fn() });
     const lines = tool.render(100);
-    expect(stripTerminalSequences(lines[1]!)).toContain("Edit sample.txt (+3 -2)");
+    expect(stripTerminalSequences(lines[1]!)).toContain("Edited sample.txt (+3 -2)");
     expect(lines[1]).toContain(theme.fg("toolDiffAdded", "+3"));
     expect(lines[1]).toContain(theme.fg("toolDiffRemoved", "-2"));
     expect(lines.slice(2)).toEqual(native);
@@ -39,7 +39,7 @@ it.each(["dark", "light"])("uses actual edit results and %s theme without changi
     const second = new ToolExecutionComponent("edit", "unsupported-fixture", args, {}, definition, { requestRender: vi.fn() } as never, dir);
     second.updateResult({ content: [{ type: "text", text: "No patch metadata" }], isError: false });
     chat.addChild(second);
-    expect(stripTerminalSequences(tool.render(100)[2]!)).toContain("  ▾ Edit sample.txt (+3 -2)");
+    expect(stripTerminalSequences(tool.render(100)[2]!)).toContain("  ▾ Edited sample.txt (+3 -2)");
     expect(tool.render(100).slice(3)).toEqual(native);
     expect(stripTerminalSequences(second.render(100)[0]!)).not.toContain("(1 line)");
     for (const width of [12, 35, 80, 240]) expect(visibleWidth(tool.render(width)[2]!)).toBeLessThanOrEqual(Math.min(width, 120));

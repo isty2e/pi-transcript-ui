@@ -151,7 +151,7 @@ it("uses compatible renamed readers but not path-only lookalikes; respects saved
   chat.addChild(a); chat.addChild(opaque);
   const settings = defaultSettings(); settings.grouping.exploration.push("external_reader", "opaque");
   let dispose = attachTranscriptPresentation(root, { getTheme: () => theme, requestRender: vi.fn(), rules: groupingRules(settings) });
-  expect(render(chat)).toContain("Exploration 2 calls (partial 1/2: 2 lines)");
+  expect(render(chat)).toContain("Explored 2 calls (partial 1/2: 2 lines)");
   dispose();
   settings.grouping.exploration = settings.grouping.exploration.filter((name) => name !== "external_reader");
   settings.grouping.standalone = ["external_reader"];
@@ -165,7 +165,7 @@ it("uses compatible renamed readers but not path-only lookalikes; respects saved
   chat.removeChild(opaque); chat.addChild(mutation);
   settings.grouping.standalone = []; settings.grouping.exploration.push("external_reader", "write"); settings.grouping.mutation = settings.grouping.mutation.filter((name) => name !== "write");
   dispose = attachTranscriptPresentation(root, { getTheme: () => theme, requestRender: vi.fn(), rules: groupingRules(settings) });
-  expect(render(chat)).toContain("Exploration 2 calls (partial 1/2: +1 -1)");
+  expect(render(chat)).toContain("Explored 2 calls (partial 1/2: +1 -1)");
   dispose();
 });
 
@@ -182,7 +182,7 @@ it("keeps pending/image/unknown members uncounted, knows empty zero, and snapsho
   const attach = () => attachTranscriptPresentation(root, { getTheme: () => theme, requestRender: vi.fn() });
   let dispose = attach();
   expect(reads).toBe(2);
-  expect(render(chat)).toContain("Reading 2 files (partial 1/2: 0 lines)…");
+  expect(render(chat)).toContain("Read 2 files (partial 1/2: 0 lines)…");
   b.updateResult({ content: [{ type: "text", text: "Read image file [image/png]" }], isError: false });
   expect(render(chat)).toContain("Read 2 files (partial 1/2: 0 lines)");
   dispose.targets()[0]!.setExpanded(true);
@@ -218,7 +218,7 @@ it("does not present output-line counts for excluded schema-unknown reads or lab
   search.updateResult({ content: [{ type: "text", text: "match" }], isError: false });
   chat.addChild(renamed); chat.addChild(search);
   dispose = attachTranscriptPresentation(root, { getTheme: () => theme, requestRender: vi.fn() });
-  expect(render(chat)).toContain("Exploration 2 calls (partial 1/2: 2 lines)");
+  expect(render(chat)).toContain("Explored 2 calls (partial 1/2: 2 lines)");
   expect(render(chat)).not.toContain("patterns");
   dispose();
 });

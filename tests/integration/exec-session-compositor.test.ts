@@ -46,7 +46,8 @@ it.skipIf(!source).each(["exec_command", "write_stdin"])("keeps %s disclosure re
       for (const final of ["M", "m"]) handler.handleMousePacket({ code: 0, row: line + 1, col: 2, final }, 0, 200, lines(), [], 100, 0, 0);
     };
     try {
-      const label = name === "exec_command" ? "Run npm test" : "Check output";
+      const label = name === "exec_command" ? `${phase === "pending" ? "Run" : "Ran"} npm test`
+        : phase === "pending" ? "Check output" : "Checked output";
       const row = lines().findIndex(line => line.includes(label));
       expect(row).toBeGreaterThanOrEqual(0);
       click(row);
