@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { commandPreview } from "../src/command-preview.js";
+import { COMMAND_SOURCE_LIMIT, commandPreview, commandPreviewPlan } from "../src/command-preview.js";
 import { displayFor, joinLine, settledLine } from "../src/display.js";
 import { NO_SUMMARY_METRICS } from "../src/tool-metrics.js";
 
@@ -75,21 +75,63 @@ it("counts known omitted multiline stages and preserves Unicode width limits", (
   }
 });
 
-it("marks multiline budget fallback and incomplete operators", () => {
-  for (const source of ["echo x\n" + "x".repeat(16384), "npm test &&\n", "echo x\r\ngit status"]) {
+it("distinguishes omitted source from incomplete first-line operators", () => {
+  for (const source of ["echo x\n" + "x".repeat(16384), "echo x\r\ngit status"]) {
     expect(commandPreview(source, 80)).toContain("[…]");
     expect(commandPreview(source, 80)).not.toContain("↵");
   }
+  expect(commandPreview("npm test &&\n", 80)).toBe("npm test &&");
+  expect(commandPreviewPlan("npm test &&\n", 80).text).toBe("npm test &&");
 });
 
-it("preserves Raw and PowerShell first-line behavior at every width", () => {
+it.each(["\n", "\n\n  \n", "\r\n", "\r\n \t\r\n"])("does not claim omitted source for a blank suffix: %j", suffix => {
+  const source = "npm test" + suffix;
+  for (const width of [0, 1, 4, 8, 12, 80, 120]) {
+    const expected = truncateToWidth("npm test", width, "…");
+    expect(commandPreview(source, width, "bash", "raw")).toBe(expected);
+    expect(commandPreview(source, width, "powershell", "raw")).toBe(expected);
+    expect(commandPreview(source, width, "powershell")).toBe(expected);
+  }
+  expect(commandPreview(source, 120)).toBe("npm test");
+  expect(commandPreviewPlan(source, 120).text).toBe("npm test");
+});
+
+it("omits whitespace-only tails when the Compact scanner refuses oversized source", () => {
+  const first = "x".repeat(COMMAND_SOURCE_LIMIT + 1);
+  const source = first + "\n \t\n";
+  for (const width of [0, 1, 8, 80]) {
+    const expected = truncateToWidth(first, width, "…");
+    expect(commandPreview(source, width)).toBe(expected);
+    expect(commandPreviewPlan(source, width).text).toBe(expected);
+  }
+});
+
+it("strips only the first CRLF separator before marking meaningful omitted source", () => {
+  const source = "npm test\r\n \tgit status\r\n";
+  expect(commandPreview(source, 120, "bash", "raw")).toBe("npm test […]");
+  expect(commandPreview(source, 120, "powershell")).toBe("npm test […]");
+  expect(commandPreview(source, 120)).toBe("npm test […]");
+  expect(commandPreview("printf a\rb", 120, "bash", "raw")).toBe("printf a b");
+});
+
+it("marks omitted Raw and PowerShell lines without interpreting them at every width", () => {
   const source = "set -euo pipefail\nnpm test\ngit diff --check";
+  const markerWidth = visibleWidth(" […]");
   for (let width = 0; width <= 120; width++) {
-    const firstLine = truncateToWidth("set -euo pipefail", width, "…");
+    const firstLine = width <= markerWidth ? truncateToWidth("[…]", width, "…")
+      : truncateToWidth("set -euo pipefail", width - markerWidth, "…") + " […]";
     expect(commandPreview(source, width, "bash", "raw")).toBe(firstLine);
     expect(commandPreview(source, width, "powershell")).toBe(firstLine);
   }
 });
+
+it.each(["cd repo\nrm -rf build\nnpm test", "python <<'PY'\nprint('body')\nPY", "Write-Output @'\nbody\n'@"])(
+  "shows only the unparsed first line plus an omission marker for %j", source => {
+    const expected = source.split("\n", 1)[0] + " […]";
+    expect(commandPreview(source, 120, "bash", "raw")).toBe(expected);
+    expect(commandPreview(source, 120, "powershell")).toBe(expected);
+  },
+);
 
 it("uses multiline previews in final summaries without changing original arguments", () => {
   const command = "set -euo pipefail\nnpm test\ngit diff --check";

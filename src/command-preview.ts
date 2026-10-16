@@ -296,7 +296,7 @@ function stageText(stage: Stage, tracing: boolean): { head: CommandPreviewPlan; 
 
 function preview(command: string, width: number, shell: "bash" | "powershell", mode: CommandPreviewMode, tracing: boolean): CommandPreviewPlan {
   const newline = command.indexOf("\n");
-  const first = command.slice(0, newline < 0 ? command.length : newline);
+  const first = newline < 0 ? command : command.slice(0, newline).replace(/\r$/, "");
   let firstLine = plain(first.replace(/[\r\t]/g, " "));
   if (tracing) {
     const spans: PreviewSpan[] = [];
@@ -306,12 +306,13 @@ function preview(command: string, width: number, shell: "bash" | "powershell", m
     firstLine = { text: firstLine.text, spans };
   }
   const fallback = () => {
-    if (newline < 0) return plain(clip(firstLine, width).text);
+    if (newline < 0 || !/\S/.test(command.slice(newline + 1))) return plain(clip(firstLine, width).text);
     const marker = " […]";
     return plain(width <= visibleWidth(marker) ? clip(plain(marker.trimStart()), width).text
       : clip(firstLine, width - visibleWidth(marker)).text + marker);
   };
-  if (mode === "raw" || shell !== "bash" || widthOf(firstLine) <= width && newline < 0) return clip(firstLine, width);
+  if (mode === "raw" || shell !== "bash") return fallback();
+  if (widthOf(firstLine) <= width && newline < 0) return clip(firstLine, width);
   const parsed = stages(command, tracing);
   if (!parsed) return fallback();
   const descriptions = parsed.map(stage => stageText(stage, tracing));

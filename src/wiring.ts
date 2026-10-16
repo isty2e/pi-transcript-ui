@@ -3,7 +3,7 @@ import { isAbsolute, normalize, resolve } from "node:path";
 import { isRecord } from "./intent.js";
 import { Spacer, stripTerminalSequences, truncateToWidth, type Component } from "@earendil-works/pi-tui";
 import { classifyTool, type ToolGroupingRules, type ToolClassification } from "./classify.js";
-import { changeText, failureText, countResultLines, codemodeLine, displayFor, runningLine, settledLine, DEFAULT_DISPLAY_LIMITS, type DisplayLimits, type LineParts, type CommandSpan } from "./display.js";
+import { changeText, failureText, countResultLines, codemodeLine, shellSessionLine, displayFor, runningLine, settledLine, DEFAULT_DISPLAY_LIMITS, type DisplayLimits, type LineParts, type CommandSpan } from "./display.js";
 import { intentFromArgs } from "./intent.js";
 import type { DisclosureTarget } from "./navigation.js";
 import { fileReadFor } from "./read-body.js";
@@ -13,6 +13,7 @@ import { summaryMetrics, type FileCapabilities } from "./tool-metrics.js";
 import { groupSummary, groupSummaryRequirements } from "./group-summary.js";
 import { createCommandColorizer } from "./shell-colors.js";
 import { codemodeSummary } from "./codemode-summary.js";
+import { shellSessionSummary } from "./shell-session-summary.js";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 
 export interface RowTheme {
@@ -54,6 +55,13 @@ function isTool(value: Component): value is NativeToolComponent {
     typeof c.setExpanded === "function" && typeof c.updateDisplay === "function" &&
     typeof c.updateArgs === "function" && typeof c.updateResult === "function" &&
     typeof c.addChild === "function" && typeof c.removeChild === "function" && typeof c.clear === "function" && Array.isArray(c.children);
+}
+
+function shellSessionFor(tool: NativeToolComponent, capabilities: FileCapabilities) {
+  if (tool.toolName !== "exec_command" && tool.toolName !== "write_stdin") return undefined;
+  if (capabilities.mutation || capabilities.read || capabilities.patch) return undefined;
+  return shellSessionSummary({ toolName: tool.toolName, parameters: tool.toolDefinition?.parameters, args: tool.args,
+    result: tool.result, isPartial: !tool.result || tool.isPartial });
 }
 
 interface NativeAssistantComponent extends Component {
@@ -158,6 +166,7 @@ class ToolGroup extends SummaryRow implements DisclosureTarget {
         toolName: tool.toolName,
         classification,
         capabilities,
+        shellSession: shellSessionFor(tool, capabilities) !== undefined,
         settled: Boolean(tool.result && !tool.isPartial),
         isError: tool.result?.isError === true,
         metrics: summaryMetrics({ toolName: tool.toolName, args: tool.args, result: tool.result,
@@ -234,9 +243,11 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
     const layout = { limits: options.displayLimits ?? DEFAULT_DISPLAY_LIMITS, ...(width === undefined ? {} : { width: Math.max(0, width - indent.length) }) };
     const display = displayFor(tool.toolName, tool.args, capability, capabilities.read, capabilities.patch);
     const intent = options.resolveIntent ? options.resolveIntent(tool.toolCallId, tool.args) : intentFromArgs(tool.args);
+    const shellSession = shellSessionFor(tool, capabilities);
     const code = display === null ? codemodeSummary({ toolName: tool.toolName, args: tool.args,
       result: tool.result, isPartial: !tool.result || tool.isPartial }) : undefined;
-    const parts = code ? codemodeLine({ summary: code, isError: tool.result?.isError === true, intent, layout })
+    const parts = shellSession ? shellSessionLine(shellSession, tool.result?.isError === true, !tool.result || tool.isPartial, intent, layout)
+      : code ? codemodeLine({ summary: code, isError: tool.result?.isError === true, intent, layout })
       : tool.result && !tool.isPartial
       ? settledLine({ toolName: tool.toolName, display, content: tool.result.content,
         isError: tool.result.isError === true, intent, layout,

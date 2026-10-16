@@ -10,6 +10,7 @@ import { commandPreview, type CommandPreviewMode } from "./command-preview.js";
 import { pathPreview } from "./path-preview.js";
 import type { PatchRequest } from "./patch-request.js";
 import type { CodemodeSummary } from "./codemode-summary.js";
+import type { ShellSessionSummary } from "./shell-session-summary.js";
 
 export interface CommandSpan {
   readonly source: string;
@@ -31,9 +32,11 @@ export interface RowLayout {
 }
 
 export type DisplayTarget =
+  | Readonly<{ kind: "none" }>
   | Readonly<{ kind: "path"; path: string }>
   | Readonly<{ kind: "query"; query: string }>
   | Readonly<{ kind: "command"; command: string; shell?: "powershell" }>
+  | Readonly<{ kind: "opaque-command"; command: string }>
   | Readonly<{ kind: "patch-request"; request: PatchRequest }>
   | Readonly<{ kind: "nested-calls"; calls: CodemodeSummary["calls"] }>;
 
@@ -140,6 +143,8 @@ export function displayFor(toolName: unknown, args: unknown, capability?: FileMu
 /** Render the target back to its display text. */
 export function targetText(target: DisplayTarget, limits: Readonly<Partial<DisplayLimits>> = DEFAULT_DISPLAY_LIMITS, width = Infinity): string {
   switch (target.kind) {
+    case "none":
+      return "";
     case "path":
       return pathPreview(target.path, Math.min(MAX_TARGET_WIDTH, width));
     case "patch-request": {
@@ -162,6 +167,9 @@ export function targetText(target: DisplayTarget, limits: Readonly<Partial<Displ
       if (target.calls.moreNames) names.push("…");
       return clip(names.join(", "), Math.min(MAX_TARGET_WIDTH, width));
     }
+    case "opaque-command":
+      return commandPreview(target.command, Math.min(width, limits.commandMaxWidth ?? DEFAULT_DISPLAY_LIMITS.commandMaxWidth),
+        undefined, "raw");
     case "command":
       return commandPreview(target.command, Math.min(width, limits.commandMaxWidth ?? DEFAULT_DISPLAY_LIMITS.commandMaxWidth), target.shell, limits.commandPreview);
   }
@@ -227,7 +235,7 @@ function summaryParts(toolName: string, display: ToolDisplay | null, outcome: st
   const shownTarget = display && targetBudget > 0 ? targetText(display.target, limits, targetBudget) : "";
   const head = shownTarget ? ` ${shownTarget}` : "";
   return { marker: "▸", action, rest: `${head}${outcome}${tail}${ending}`,
-    ...(shownTarget && display?.target.kind === "command" && display.target.shell !== "powershell" && limits.commandPreview === "compact"
+    ...(shownTarget && display?.target.kind === "command" && display.target.shell === undefined && limits.commandPreview === "compact"
       ? { command: { source: display.target.command, width: Math.min(targetBudget, limits.commandMaxWidth), offset: 1, length: shownTarget.length } } : {}),
     ...(tail ? { intent: { offset: head.length + outcome.length, length: tail.length } } : {}),
     ...(delta ? { change: { ...delta, offset: head.length } } : {}) };
@@ -241,6 +249,13 @@ export function runningLine(
 ): LineParts {
   const outcome = display?.target.kind === "patch-request" ? ` ${requestedPatchText(display.target.request.delta)}` : "";
   return summaryParts(toolName, display, outcome, true, intent, layout);
+}
+
+export function shellSessionLine(summary: ShellSessionSummary, isError: boolean, isPartial: boolean,
+  intent?: string, layout: RowLayout = {}): LineParts {
+  const outcome = `${isError ? " — error" : ""}${summary.exitCode === undefined ? "" : ` (exit ${summary.exitCode})`}`;
+  return summaryParts(summary.action, { action: summary.action, target: summary.action === "Run"
+    ? { kind: "opaque-command", command: summary.command } : { kind: "none" } }, outcome, isPartial, intent, layout);
 }
 
 function parentDurationText(ms: number): string {

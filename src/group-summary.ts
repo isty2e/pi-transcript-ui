@@ -12,6 +12,7 @@ export interface GroupMemberSummary {
   readonly readPath: string | undefined;
   readonly metrics: SummaryMetrics;
   readonly outputLines: number;
+  readonly shellSession: boolean;
 }
 
 interface GroupSelectionInput {
@@ -61,7 +62,7 @@ function selectSummary(input: GroupSelectionInput) {
   }
 
   const countOutput = !readGroup && classification.family !== "mutation" && done &&
-    !members.some(member => member.toolName === "bash" || member.toolName === "codemode" || member.capabilities.mutation || member.capabilities.patch || member.metrics.patch.kind === "known");
+    !members.some(member => member.shellSession || member.toolName === "bash" || member.toolName === "codemode" || member.capabilities.mutation || member.capabilities.patch || member.metrics.patch.kind === "known");
   return { done, verb, readGroup, countOutput };
 }
 

@@ -120,6 +120,29 @@ LF and CRLF are accepted. Recognition is limited to 65,536 UTF-16 units per payl
 
 This is not a patch-applicability validator or proof that the tool mutates files. Custom tools using the same shape for another purpose can override grouping in settings. Alternate Create/Edit envelope dialects, lenient unprefixed bodies, schema references/compositions, freeform transports, provider-specific applied receipts and phase outcomes are outside this support. No files are read to reconstruct missing counts.
 
+### Shell sessions
+
+Compatible `exec_command` and `write_stdin` calls use request-oriented summaries:
+
+```text
+Run npm test
+Run npm test (exit 7)
+Check output
+Send input
+```
+
+Recognition requires the exact tool name and a bounded direct object schema: required string `cmd` for `exec_command`, or required numeric `session_id` and declared string `chars` for `write_stdin`. Every declared required field must be present with a defined value before recognition; missing fields are not filled from schema defaults.
+
+Commands use an unparsed first-line preview, without assuming Bash syntax or applying shell colors. Non-whitespace source on later lines adds `[…]` to mark omission when space permits: `Run cd repo […] (exit 0)`. Trailing blank or whitespace-only lines do not add the marker. A blank first line uses generic/native presentation instead of an empty `Run` label. The exit code describes the whole call, not just the displayed line.
+
+For the supported plain-string input contract, omitting optional `chars` or providing an empty string means `Check output`; any nonempty string, including whitespace or control input, means `Send input`. The summary does not echo the input or show a session ID. Nonempty binary input, unknown input fields, ambiguous defaults, unsupported schemas and malformed summary inputs keep the existing generic/native presentation. This is not a decoder for provider-specific input formats.
+
+An exit code appears only after the call settles and supported result metadata supplies it. Recognized receipt shapes use `output` and `wall_time_seconds` with `exit_code`, `chunkId` and `wallTimeSeconds` with `exitCode`, or matching `tool`, `status: "exited"`, `output` and `durationMs` with `exitCode`. Missing, malformed or conflicting codes are omitted, not treated as success. Exit codes do not determine the native `— error` marker, and the summary does not infer whether a process is still running. Recognized shell summaries omit output-line totals; a group containing one also omits the group-wide output-line total. Groups still count native calls.
+
+Expanded shell calls keep the same layout as other tools: a leading blank line, the summary row with any purpose text, then the complete original native rendering. The summary remains available for disclosure while waiting for a result and after completion, even if the provider hides its own title or body. Removing duplicate native titles is outside this support; a different policy is deferred until a shared disclosure and purpose-text contract is agreed for all tools.
+
+This changes presentation only; full argument validation remains with the provider. It does not join calls by session ID, reconstruct the command behind `write_stdin`, split scripts into tools or recursively rewrite another extension's nested text components. File-operation recognition takes precedence over these shell summaries.
+
 ### Codemode
 
 Pi's native `codemode` tool keeps one parent row, with a compact summary of its recorded activity:
@@ -175,7 +198,7 @@ Shell settings such as `set` are displayed as ordinary commands, not hidden or c
 
 Slash-shaped arguments can be shortened even when they are not filesystem paths. A preview shows requested syntax, not which branches actually executed. It is not a copyable replacement command. Neither mode is secret redaction; sensitive argument values may remain visible.
 
-Compact Bash previews use Pi's syntax colors from the original command; generated markers use the theme's muted color. Coloring is best effort: retained text with verified original-source positions keeps its syntax colors, while opaque regions remain plain. Oversized or control-bearing commands and unsupported highlighting output can still leave the whole preview uncolored. Failed rows keep their error color. Raw and PowerShell previews are unchanged.
+Compact Bash previews use Pi's syntax colors from the original command; generated markers use the theme's muted color. Coloring is best effort: retained text with verified original-source positions keeps its syntax colors, while opaque regions remain plain. Oversized or control-bearing commands and unsupported highlighting output can still leave the whole preview uncolored. Failed rows keep their error color. Raw and PowerShell previews do not apply shell syntax colors.
 
 Confirmed heredocs are omitted locally, so their surrounding commands remain visible. For example:
 
@@ -196,6 +219,6 @@ Compact recognizes `<<` and `<<-` after a command name, with nonempty delimiter 
 
 Compact does not fully parse shell scripts. Here-strings (`<<<`), heredocs inside command substitutions, redirections before the command name, other delimiter spellings, quoted newlines and other unsupported syntax remain out of scope. These cases, or an unconfirmed heredoc boundary, retain earlier recognized commands followed by one opaque remainder such as `python […]`; scanning does not resume beyond that remainder. This conservative boundary avoids presenting body text as commands. Unsupported initial single-line syntax and commands too large to compact use a first-line preview; multiline fallback also marks omitted content with `[…]`.
 
-PowerShell always uses the raw first-line form.
+Raw and PowerShell previews show the first line without interpreting its syntax. If later lines contain non-whitespace source, `[…]` indicates omission when space permits; trailing blank or whitespace-only lines do not add it. CRLF separators do not appear as extra spaces. The marker itself may be clipped at very narrow widths. PowerShell always uses this form.
 
 Choose **Raw** in [command preview settings](settings.md#command-preview) to bypass compact transformations. Both modes obey the row and field width limits; neither changes execution or expanded output.
