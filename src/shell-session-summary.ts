@@ -2,7 +2,7 @@ import { INTENT_FIELD, isRecord } from "./intent.js";
 import { supportedDirectSchema } from "./schema-capability.js";
 
 export type ShellSessionSummary = (
-  | Readonly<{ action: "Run"; command: string }>
+  | Readonly<{ action: "Run"; command: string; commandSyntax?: "bash" }>
   | Readonly<{ action: "Check output" | "Send input"; command?: never }>
 ) & Readonly<{ exitCode?: number }>;
 
@@ -50,7 +50,13 @@ export function shellSessionSummary({ toolName, parameters, args, result, isPart
 
     if (toolName === "exec_command") {
       if (!required("cmd", "string") || typeof args.cmd !== "string" || !args.cmd.split("\n", 1)[0]?.trim()) return undefined;
-      return { action: "Run", command: args.cmd, ...outcome };
+
+      const shellSchema: unknown = Object.getOwnPropertyDescriptor(fields, "shell")?.value;
+      const shell: unknown = isRecord(shellSchema) && Object.getOwnPropertyDescriptor(shellSchema, "type")?.value === "string"
+        ? Object.getOwnPropertyDescriptor(args, "shell")?.value : undefined;
+      const executable = typeof shell === "string" ? shell.split(/[\\/]/).at(-1) : undefined;
+      const syntax = executable === "bash" || executable === "bash.exe" ? { commandSyntax: "bash" as const } : {};
+      return { action: "Run", command: args.cmd, ...syntax, ...outcome };
     }
 
     if (!required("session_id", "number") || !isSafeInteger(args.session_id) || args.session_id < 0 ||

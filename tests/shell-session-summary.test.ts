@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { shellSessionSummary } from "../src/shell-session-summary.js";
-import { joinLine, shellSessionLine, targetText } from "../src/display.js";
+import { displayFor, joinLine, runningLine, shellSessionLine, targetText } from "../src/display.js";
 
 const schema = (name: string, extras: Record<string, unknown> = {}) => ({ type: "object",
   properties: { [name === "exec_command" ? "cmd" : "session_id"]: { type: name === "exec_command" ? "string" : "number" },
@@ -23,6 +23,76 @@ it("projects common requests without assuming shell language or process lifetime
   expect(summarize("exec_command", { cmd: "npm test", shell: "/bin/fish" })).toEqual({ action: "Run", command: "npm test" });
   for (const chars of [undefined, ""]) expect(summarize("write_stdin", { session_id: 1, chars })).toEqual({ action: "Check output" });
   for (const chars of ["\n", " ", "\u0003", "help\n", "\\x03"]) expect(summarize("write_stdin", { session_id: 1, chars })).toEqual({ action: "Send input" });
+});
+
+const chain = "cd /workspace/a/long/project/directory && npm run build --configuration lengthy-development-profile || printf '%s' fallback | head -n 20";
+const rawExecLine = (command: string, width = 120) => runningLine("exec_command",
+  { action: "Run", target: { kind: "opaque-command", command } }, undefined, { width });
+
+it.each(["bash", "/bin/bash", "/usr/local/bin/bash", "/opt/homebrew/bin/bash", "/nix/store/custom-package/bin/bash",
+  "/Volumes/Custom Tools/bin/bash", "bash.exe", "C:\\Program Files\\Git\\bin\\bash.exe"])(
+  "shares the Bash Compact behavior for an explicit executable %j", shell => {
+    const args = Object.freeze({ cmd: chain, shell });
+    const summary = summarize("exec_command", args, undefined, schema("exec_command", { shell: { type: "string" } }))!;
+    const layout = { width: 72 };
+    const actual = shellSessionLine(summary, false, true, { layout });
+    const expected = runningLine("bash", displayFor("bash", { command: chain }), undefined, layout);
+    expect(actual).toEqual(expected);
+    expect(joinLine(actual)).toMatch(/&&.*\|\|.*\|/);
+    expect(args).toEqual({ cmd: chain, shell });
+  },
+);
+
+it("honors Raw rather than forcing Compact for a known Bash executable", () => {
+  const summary = summarize("exec_command", { cmd: chain, shell: "/usr/local/bin/bash" }, undefined,
+    schema("exec_command", { shell: { type: "string" } }))!;
+  const limits = { commandPreview: "compact" as "compact" | "raw" };
+  const layout = { width: 72, limits };
+  expect(shellSessionLine(summary, false, true, { layout })).toEqual(
+    runningLine("bash", displayFor("bash", { command: chain }), undefined, layout));
+  limits.commandPreview = "raw";
+  expect(shellSessionLine(summary, false, true, { layout })).toEqual(
+    runningLine("bash", displayFor("bash", { command: chain }), undefined, layout));
+});
+
+it.each([undefined, "", "/bin/zsh", "/bin/fish", "sh", "pwsh", "cmd.exe", "/bin/mybash", "/bin/bash-wrapper",
+  "/bin/bash -lc", "/usr/bin/env bash", "/bin/bash/", "/bin/bash\n", 12])(
+  "keeps unavailable or non-Bash shell evidence opaque: %j", shell => {
+    const summary = summarize("exec_command", { cmd: chain, shell }, undefined,
+      schema("exec_command", { shell: { type: "string", default: "/bin/bash" } }))!;
+    for (const width of [24, 72]) {
+      expect(shellSessionLine(summary, false, true, { layout: { width } })).toEqual(rawExecLine(chain, width));
+    }
+  },
+);
+
+it("does not infer Bash from an undeclared shell, schema default or command prefix", () => {
+  for (const parameters of [schema("exec_command"), schema("exec_command", { shell: { type: "number" } })]) {
+    const summary = summarize("exec_command", { cmd: chain, shell: "/bin/bash" }, undefined, parameters)!;
+    expect(shellSessionLine(summary, false, true)).toEqual(rawExecLine(chain));
+  }
+  const command = `bash -lc '${chain}'`;
+  const summary = summarize("exec_command", { cmd: command }, undefined,
+    schema("exec_command", { shell: { type: "string", default: "/bin/bash" } }))!;
+  expect(shellSessionLine(summary, false, true)).toEqual(rawExecLine(command));
+});
+
+it("does not promote inherited or accessor shell evidence to a Bash command", () => {
+  const parameters = schema("exec_command", { shell: { type: "string" } });
+  const inherited = { cmd: chain };
+  Object.setPrototypeOf(inherited, { shell: "/bin/bash" });
+  let reads = 0;
+  const accessor = Object.defineProperty({ cmd: chain }, "shell", { get() { reads++; return "/bin/bash"; } });
+  for (const args of [inherited, accessor]) {
+    const summary = summarize("exec_command", args, undefined, parameters)!;
+    expect(shellSessionLine(summary, false, true)).toEqual(rawExecLine(chain));
+  }
+  expect(reads).toBe(0);
+
+  const undeclared = schema("exec_command");
+  Object.setPrototypeOf(undeclared.properties, { shell: { type: "string" } });
+  const summary = summarize("exec_command", { cmd: chain, shell: "/bin/bash" }, undefined, undeclared)!;
+  expect(shellSessionLine(summary, false, true)).toEqual(rawExecLine(chain));
 });
 
 it.each(["exec_command", "write_stdin"])("requires every declared input before projecting %s", name => {
