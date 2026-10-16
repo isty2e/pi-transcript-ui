@@ -10,7 +10,6 @@ export interface CodemodeSummary {
     names: readonly Readonly<{ name: string; count: number }>[];
     moreNames: boolean;
   }> | undefined;
-  readonly durationMs: number | undefined;
 }
 
 function nestedCalls(value: unknown): CodemodeSummary["calls"] {
@@ -47,8 +46,6 @@ export function codemodeSummary({ toolName, args, result, isPartial }: {
   try {
     if (toolName !== "codemode" || !isRecord(args) || typeof args.code !== "string") return undefined;
     const details = isRecord(result) && isRecord(result.details) ? result.details : undefined;
-    const duration = isRecord(result) ? result.durationMs : undefined;
-    return { isPartial, calls: nestedCalls(details?.calls),
-      durationMs: !isPartial && typeof duration === "number" && Number.isFinite(duration) && duration >= 0 ? duration : undefined };
+    return { isPartial, calls: nestedCalls(details?.calls) };
   } catch { return undefined; }
 }

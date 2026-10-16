@@ -10,6 +10,7 @@ const compatibilityCases = [
   "tests/integration/file-mutation.test.ts",
   "tests/integration/exec-session.test.ts",
   "tests/integration/exec-session-modern.test.ts",
+  "tests/integration/tool-duration.test.ts",
 
   "tests/integration/adjacent-groups.test.ts",
   "tests/integration/navigation.test.ts",

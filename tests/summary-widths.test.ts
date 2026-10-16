@@ -64,10 +64,10 @@ it("loads old files without rewriting or replacing explicit intent limits", asyn
     await writeFile(store.path, original);
     const loaded = await store.load();
     expect(loaded.settings.intent.maxLength).toBe(96);
-    expect(loaded.settings.display).toEqual({ rowMaxWidth: 120, commandMaxWidth: 120, intentMaxWidth: 48, commandPreview: 'compact' });
+    expect(loaded.settings.display).toEqual({ rowMaxWidth: 120, commandMaxWidth: 120, intentMaxWidth: 48, commandPreview: 'compact', toolDuration: true });
     expect(await readFile(store.path, "utf8")).toBe(original);
     expect(defaultSettings().intent.maxLength).toBe(48);
-    expect(parseSettings({ ...legacy, display: { commandMaxWidth: 200 } }).display).toEqual({ rowMaxWidth: 120, commandMaxWidth: 200, intentMaxWidth: 48, commandPreview: 'compact' });
+    expect(parseSettings({ ...legacy, display: { commandMaxWidth: 200 } }).display).toEqual({ rowMaxWidth: 120, commandMaxWidth: 200, intentMaxWidth: 48, commandPreview: 'compact', toolDuration: true });
     for (const width of [0, -1, 2.5, NaN, Infinity, "40", null]) {
       expect(() => parseSettings({ ...legacy, display: { commandMaxWidth: width } })).toThrow();
       expect(() => parseSettings({ ...legacy, display: { rowMaxWidth: width } })).toThrow();
@@ -86,7 +86,7 @@ it("saves generation and all display limits and discards cancelled width changes
       .mockResolvedValueOnce("Display").mockResolvedValueOnce("Total row width: 120").mockResolvedValueOnce("Back").mockResolvedValueOnce("Save");
     ui.input.mockResolvedValueOnce("160").mockResolvedValueOnce("32").mockResolvedValueOnce("24").mockResolvedValueOnce("100");
     const saved = await editSettings(ui, store);
-    expect(saved?.display).toEqual({ rowMaxWidth: 100, commandMaxWidth: 160, intentMaxWidth: 32, commandPreview: 'compact' });
+    expect(saved?.display).toEqual({ rowMaxWidth: 100, commandMaxWidth: 160, intentMaxWidth: 32, commandPreview: 'compact', toolDuration: true });
     expect(saved?.intent.maxLength).toBe(24);
     expect((await store.load()).settings).toEqual(saved);
     const original = await readFile(store.path, "utf8");

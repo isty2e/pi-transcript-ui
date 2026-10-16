@@ -23,7 +23,7 @@ it("live settings, reload and session navigation retain native body/expansion an
   const root = new Container(), chat = new Container(); root.addChild(chat);
   const args = {}, tool = new ToolExecutionComponent("custom", "c1", args, {}, undefined, { requestRender: vi.fn() } as never, dir);
   chat.addChild(tool);
-  tool.updateResult({ content: [{ type: "text", text: "NATIVE BODY" }], isError: false });
+  tool.updateResult({ content: [{ type: "text", text: "NATIVE BODY" }], isError: false, durationMs: 1234 });
   tool.setExpanded(true);
   const native = tool.render(80);
   const bashArgs = { command: 'cd /Users/example/' + 'long-directory/'.repeat(12) + 'project && git status' };
@@ -46,6 +46,25 @@ it("live settings, reload and session navigation retain native body/expansion an
     const cleaned = handlers.get("message_end")!({ message: { role: "assistant", content: [{ type: "toolCall", id: "c1", name: "custom", arguments: { displaySummary: "Check original rendering" } }] } });
     tool.updateArgs(cleaned.message.content[0].arguments);
     expect(tool.render(80)[1]).toContain("Check original rendering");
+    expect(tool.render(80).slice(2)).toEqual(native);
+    expect(tool.render(80)[1]).toContain("(1.2s)");
+    ui.select.mockResolvedValueOnce("Display").mockResolvedValueOnce("Tool duration: on").mockResolvedValueOnce("Back").mockResolvedValueOnce("Save");
+    await commands.get("transcript-ui")!.handler("settings", ctx);
+    const durationOffDisk = await readFile(join(dir, "settings.json"), "utf8");
+    expect(JSON.parse(durationOffDisk).display.toolDuration).toBe(false);
+    expect(tool.render(80)[1]).not.toContain("(1.2s)");
+    expect(tool.render(80).slice(2)).toEqual(native);
+
+    ui.select.mockResolvedValueOnce("Display").mockResolvedValueOnce("Tool duration: off").mockResolvedValueOnce("Back").mockResolvedValueOnce("Cancel");
+    await commands.get("transcript-ui")!.handler("settings", ctx);
+    expect(await readFile(join(dir, "settings.json"), "utf8")).toBe(durationOffDisk);
+    expect(tool.render(80)[1]).not.toContain("(1.2s)");
+    await handlers.get("session_start")!({ reason: "reload" }, ctx);
+    expect(tool.render(80)[1]).not.toContain("(1.2s)");
+
+    ui.select.mockResolvedValueOnce("Display").mockResolvedValueOnce("Tool duration: off").mockResolvedValueOnce("Back").mockResolvedValueOnce("Save");
+    await commands.get("transcript-ui")!.handler("settings", ctx);
+    expect(tool.render(80)[1]).toContain("(1.2s)");
     expect(tool.render(80).slice(2)).toEqual(native);
     ui.select.mockResolvedValueOnce("Intent").mockResolvedValueOnce("Intent: on").mockResolvedValueOnce("Back").mockResolvedValueOnce("Save");
     await commands.get("transcript-ui")!.handler("settings", ctx);

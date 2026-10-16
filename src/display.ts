@@ -24,11 +24,17 @@ export interface DisplayLimits {
   commandMaxWidth: number;
   intentMaxWidth: number;
   commandPreview: CommandPreviewMode;
+  toolDuration: boolean;
 }
-export const DEFAULT_DISPLAY_LIMITS: Readonly<DisplayLimits> = { rowMaxWidth: 120, commandMaxWidth: 120, intentMaxWidth: 48, commandPreview: "compact" };
+export const DEFAULT_DISPLAY_LIMITS: Readonly<DisplayLimits> = { rowMaxWidth: 120, commandMaxWidth: 120, intentMaxWidth: 48, commandPreview: "compact", toolDuration: true };
 export interface RowLayout {
   limits?: Readonly<Partial<DisplayLimits>>;
   width?: number;
+}
+interface ToolSummaryContext {
+  readonly intent?: string | null | undefined;
+  readonly layout?: RowLayout;
+  readonly durationMs?: number | undefined;
 }
 
 export type DisplayTarget =
@@ -219,12 +225,16 @@ function clip(text: string, width: number): string {
 }
 
 function summaryParts(toolName: string, display: ToolDisplay | null, outcome: string, streaming: boolean,
-  intent: string | null | undefined, layout: RowLayout, delta?: EditDelta): LineParts {
+  { intent, layout = {}, durationMs }: ToolSummaryContext, delta?: EditDelta): LineParts {
   const limits = { ...DEFAULT_DISPLAY_LIMITS, ...layout.limits };
   const width = Math.min(layout.width ?? limits.rowMaxWidth, limits.rowMaxWidth);
   const action = display?.action ?? toolName;
   const ending = streaming ? "…" : "";
-  const remaining = Math.max(0, width - visibleWidth(`▸ ${action}${outcome}${ending}`));
+  const duration = !streaming && limits.toolDuration && durationMs !== undefined ? toolDurationText(durationMs) : undefined;
+  const timing = duration !== undefined && visibleWidth(`▸ ${action}${outcome} (${duration})${ending}`) <= width
+    ? ` (${duration})` : "";
+  const shownOutcome = outcome + timing;
+  const remaining = Math.max(0, width - visibleWidth(`▸ ${action}${shownOutcome}${ending}`));
   const target = display ? targetText(display.target, limits) : "";
   const targetReserve = target ? Math.min(visibleWidth(target) + 1, Math.ceil(remaining / 2)) : 0;
   const purpose = intent?.trim();
@@ -234,10 +244,10 @@ function summaryParts(toolName: string, display: ToolDisplay | null, outcome: st
   const targetBudget = Math.max(0, remaining - visibleWidth(tail) - 1);
   const shownTarget = display && targetBudget > 0 ? targetText(display.target, limits, targetBudget) : "";
   const head = shownTarget ? ` ${shownTarget}` : "";
-  return { marker: "▸", action, rest: `${head}${outcome}${tail}${ending}`,
+  return { marker: "▸", action, rest: `${head}${shownOutcome}${tail}${ending}`,
     ...(shownTarget && display?.target.kind === "command" && display.target.shell === undefined && limits.commandPreview === "compact"
       ? { command: { source: display.target.command, width: Math.min(targetBudget, limits.commandMaxWidth), offset: 1, length: shownTarget.length } } : {}),
-    ...(tail ? { intent: { offset: head.length + outcome.length, length: tail.length } } : {}),
+    ...(tail ? { intent: { offset: head.length + shownOutcome.length, length: tail.length } } : {}),
     ...(delta ? { change: { ...delta, offset: head.length } } : {}) };
 }
 
@@ -248,17 +258,17 @@ export function runningLine(
   layout: RowLayout = {},
 ): LineParts {
   const outcome = display?.target.kind === "patch-request" ? ` ${requestedPatchText(display.target.request.delta)}` : "";
-  return summaryParts(toolName, display, outcome, true, intent, layout);
+  return summaryParts(toolName, display, outcome, true, { intent, layout });
 }
 
 export function shellSessionLine(summary: ShellSessionSummary, isError: boolean, isPartial: boolean,
-  intent?: string, layout: RowLayout = {}): LineParts {
+  context: ToolSummaryContext = {}): LineParts {
   const outcome = `${isError ? " — error" : ""}${summary.exitCode === undefined ? "" : ` (exit ${summary.exitCode})`}`;
   return summaryParts(summary.action, { action: summary.action, target: summary.action === "Run"
-    ? { kind: "opaque-command", command: summary.command } : { kind: "none" } }, outcome, isPartial, intent, layout);
+    ? { kind: "opaque-command", command: summary.command } : { kind: "none" } }, outcome, isPartial, context);
 }
 
-function parentDurationText(ms: number): string {
+function toolDurationText(ms: number): string {
   const seconds = ms / 1000;
   if (seconds < 60) return `${seconds.toFixed(1)}s`;
 
@@ -268,12 +278,10 @@ function parentDurationText(ms: number): string {
   return minutes < 60 ? `${minutes}m ${remainder}s` : `${Math.floor(minutes / 60)}h ${minutes % 60}m ${remainder}s`;
 }
 
-export function codemodeLine({ summary, isError, intent, layout = {} }: {
+export function codemodeLine({ summary, isError, ...context }: {
   readonly summary: CodemodeSummary;
   readonly isError: boolean;
-  readonly intent?: string | null | undefined;
-  readonly layout?: RowLayout;
-}): LineParts {
+} & ToolSummaryContext): LineParts {
   const facts: string[] = [];
   if (summary.calls) {
     const { total, running, errors, cancelled } = summary.calls;
@@ -282,45 +290,42 @@ export function codemodeLine({ summary, isError, intent, layout = {} }: {
     if (errors) facts.push(`${errors} ${errors === 1 ? "error" : "errors"}`);
     if (cancelled) facts.push(`${cancelled} cancelled`);
   }
-  if (summary.durationMs !== undefined) facts.push(parentDurationText(summary.durationMs));
   const outcome = `${isError ? " — error" : ""}${facts.length ? ` (${facts.join("; ")})` : ""}`;
   return summaryParts("codemode", { action: "Code", target: { kind: "nested-calls", calls: summary.calls } },
-    outcome, summary.isPartial, intent, layout);
+    outcome, summary.isPartial, context);
 }
 
-export interface SettledLineInput {
+export interface SettledLineInput extends ToolSummaryContext {
   readonly toolName: string;
   readonly display: ToolDisplay | null;
   readonly content: unknown;
   readonly isError: boolean;
-  readonly intent?: string | null | undefined;
-  readonly layout?: RowLayout;
   readonly metrics: SummaryMetrics;
 }
 
 export function settledLine({
-  toolName, display, content, isError, intent, layout = {}, metrics,
+  toolName, display, content, isError, metrics, ...context
 }: SettledLineInput): LineParts {
   if (display?.target.kind === "patch-request") {
     const outcome = `${isError ? " — error" : ""} ${requestedPatchText(display.target.request.delta)}`;
-    return summaryParts(toolName, display, outcome, false, intent, layout);
+    return summaryParts(toolName, display, outcome, false, context);
   }
   if (metrics.read.kind !== "not-applicable") {
     const outcome = isError ? "— error" : metrics.read.kind === "known"
       ? `(${pluralLines(metrics.read.value.lines)})` : "(lines unknown)";
-    return summaryParts(toolName, display, ` ${outcome}`, false, intent, layout);
+    return summaryParts(toolName, display, ` ${outcome}`, false, context);
   }
   if (metrics.written.kind !== "not-applicable") {
     const outcome = isError ? " — error" : metrics.written.kind === "known"
       ? ` (${pluralLines(metrics.written.value)})` : "";
-    return summaryParts(toolName, display, outcome, false, intent, layout);
+    return summaryParts(toolName, display, outcome, false, context);
   }
   const delta = metrics.patch.kind === "known" ? metrics.patch.value : undefined;
   if (!delta && toolName === "bash" && display?.action !== "Write" && display?.action !== "Edit") {
-    return summaryParts(toolName, display, isError ? " — error" : "", false, intent, layout);
+    return summaryParts(toolName, display, isError ? " — error" : "", false, context);
   }
   if (!delta && (display?.action === "Write" || display?.action === "Edit" || toolName === "write" || toolName === "edit")) {
-    return summaryParts(toolName, display, isError ? " — error" : "", false, intent, layout);
+    return summaryParts(toolName, display, isError ? " — error" : "", false, context);
   }
   const lines = countResultLines(content);
   const unit = unitFor(toolName);
@@ -329,7 +334,7 @@ export function settledLine({
     : unit === "lines"
       ? `(${pluralLines(lines)})`
       : `(${lines} ${unit})`;
-  return summaryParts(toolName, display, ` ${outcome}`, false, intent, layout, isError ? undefined : delta);
+  return summaryParts(toolName, display, ` ${outcome}`, false, context, isError ? undefined : delta);
 }
 
 export type CountedChange = EditDelta & (

@@ -32,6 +32,7 @@ export async function editSettings(ui: SettingsUI, file: SettingsFile): Promise<
       { category: "Display", id: "rowMaxWidth", label: `Total row width: ${draft.display.rowMaxWidth}` },
       { category: "Grouping", id: "standalone", label: `Standalone tools — exclude auto-grouping (${draft.grouping.standalone?.length ?? 0})` },
       { category: "Display", id: "command-preview", label: `Command preview: ${draft.display.commandPreview === "raw" ? "Raw" : "Compact"}` },
+      { category: "Display", id: "tool-duration", label: `Tool duration: ${draft.display.toolDuration ? "on" : "off"}` },
     ] as const satisfies readonly { category: SettingsCategory; id: string; label: string }[];
     const visibleOptions = options.filter(option => option.category === category);
     const chosen = await ui.select(`Transcript UI settings — ${category}`, [...visibleOptions.map(option => option.label), "Back"]);
@@ -63,6 +64,9 @@ export async function editSettings(ui: SettingsUI, file: SettingsFile): Promise<
       }
       case "intent-enabled":
         candidate.intent.enabled = !candidate.intent.enabled;
+        break;
+      case "tool-duration":
+        candidate.display.toolDuration = !candidate.display.toolDuration;
         break;
       case "intent-language": {
         const language = await ui.select("Intent language", ["auto", "en", "zh-CN"]);

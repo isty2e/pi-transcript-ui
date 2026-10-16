@@ -44,13 +44,13 @@ it("uses only observed nested calls and final parent time, not source prediction
     component.updateResult(receipt, true);
     expect(text(chat)).toContain("2 nested calls so far; 1 error");
     component.updateResult(receipt);
-    expect(text(chat)).toBe("\n▸ Code read ×2 (2 nested calls; 1 error; 1.2s)");
+    expect(text(chat)).toBe("\n▸ Code read ×2 (2 nested calls; 1 error) (1.2s)");
     expect(component.result?.isError).toBe(false);
     expect(text(chat)).not.toContain("— error");
     expect(text(chat)).not.toContain("99.0s");
 
     component.updateResult({ ...receipt, isError: true });
-    expect(text(chat)).toBe("\n▸ Code read ×2 — error (2 nested calls; 1 error; 1.2s)");
+    expect(text(chat)).toBe("\n▸ Code read ×2 — error (2 nested calls; 1 error) (1.2s)");
   } finally { dispose(); }
 });
 
@@ -75,7 +75,7 @@ it("preserves empty, cancelled and running records without converting nested sta
   const dispose = attachTranscriptPresentation(root, { getTheme: () => theme, requestRender: vi.fn() });
   try {
     component.updateResult(result([], false, 0));
-    expect(text(chat)).toBe("\n▸ Code (0 nested calls; 0.0s)");
+    expect(text(chat)).toBe("\n▸ Code (0 nested calls) (0.0s)");
     component.updateResult(result([call("models.classify", "cancelled"), call("bash", "running")], false, NaN));
     expect(text(chat)).toBe("\n▸ Code models.classify, bash (2 nested calls; 1 running; 1 cancelled)");
   } finally { dispose(); }
@@ -95,7 +95,7 @@ it.each(["dark", "light"])("keeps the native body, identities, optional intent a
   chat.addChild(component);
   const dispose = attachTranscriptPresentation(root, { getTheme: () => theme, requestRender: vi.fn() });
   try {
-    expect(text(chat)).toContain("Code read ×2, bash, models.classify (4 nested calls; 1.2s) — 실제 호출 확인");
+    expect(text(chat)).toContain("Code read ×2, bash, models.classify (4 nested calls) (1.2s) — 실제 호출 확인");
     expect(text(chat)).not.toContain("not_observed");
     for (const width of widths) {
       const rows = component.render(width);
@@ -145,7 +145,7 @@ it("re-reads current facts after removal, clear and re-attachment, without stale
   const dispose = attachTranscriptPresentation(root, options);
   const staleUpdate = component.updateDisplay;
   component.updateResult(result([call("read")]));
-  expect(text(chat)).toContain("1 nested call;");
+  expect(text(chat)).toContain("1 nested call) (1.2s)");
   chat.removeChild(component);
   expect(component.render).toBe(originalRender);
   component.updateResult(result([call("bash", "cancelled")]));
