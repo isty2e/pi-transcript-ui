@@ -18,9 +18,9 @@ Expand an individual call to see its original output. Read groups count files; m
 
 ## Install
 
-Requires [Pi](https://pi.dev) and Node.js 22.19 or newer. Pi 0.85.1 is the checked runtime baseline; compatibility with other versions is not assured.
+Requires [Pi](https://pi.dev) and Node.js 22.19 or newer. Pi 1.3.0 is the primary tested host; compatibility with other versions is not assured.
 
-Native codemode is not available on Pi 0.85.1. Codemode and shell-session summaries have [targeted coverage on Pi 1.2.0](docs/compatibility.md), not full terminal or compositor coverage.
+Older-host checks are feature-specific, not full UI compatibility tests. Native codemode is not available on Pi 0.85.1. See [tested hosts and coverage](docs/compatibility.md#tested-hosts) for test scope and limitations.
 
 Install from npm (recommended):
 

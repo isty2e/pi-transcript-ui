@@ -3,17 +3,21 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Container, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
-import { createEditToolDefinition, createReadToolDefinition, createWriteToolDefinition, initTheme } from "@earendil-works/pi-coding-agent";
-import { generateUnifiedPatch } from "../../node_modules/@earendil-works/pi-coding-agent/dist/core/tools/edit-diff.js";
-import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
+import { createEditToolDefinition, createReadToolDefinition, createWriteToolDefinition, defineTool, generateUnifiedPatch, initTheme, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { theme } from "../fixtures/pi-theme.js";
 import { attachTranscriptPresentation } from "../../src/wiring.js";
 import { defaultSettings, groupingRules } from "../../src/settings.js";
-import { nativeTool, nativeTranscript as tree, type NativeToolDefinition } from "./fixtures/native-components.js";
+import { nativeTool, nativeTranscript as tree } from "./fixtures/native-components.js";
 
 const result = (before = "old\n", after = "new\n") => ({ content: [{ type: "text" as const, text: "success" }], isError: false, details: { patch: generateUnifiedPatch("same.txt", before, after) } });
 const text = (chat: Container, width = 120) => stripTerminalSequences(chat.render(width).join("\n"));
-function component(def: NativeToolDefinition | undefined, id: string, args: unknown = { path: "same.txt", edits: [{ oldText: "old", newText: "new" }] }, name = def?.name ?? "edit") {
-  return nativeTool({ name, id, args, definition: def });
+function component<TParams extends ToolDefinition["parameters"], TDetails, TState>(
+  def: ToolDefinition<TParams, TDetails, TState> | undefined,
+  id: string,
+  args: unknown = { path: "same.txt", edits: [{ oldText: "old", newText: "new" }] },
+  name = def?.name ?? "edit",
+) {
+  return nativeTool({ name, id, args, definition: def && defineTool(def) });
 }
 const attach = (root: Container) => attachTranscriptPresentation(root, { getTheme: () => theme, requestRender: vi.fn() });
 

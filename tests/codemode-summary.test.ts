@@ -1,8 +1,13 @@
 import { expect, it } from "vitest";
+import { join } from "node:path";
+import { getPackageDir } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { codemodeSummary } from "../src/codemode-summary.js";
 import { codemodeLine, joinLine } from "../src/display.js";
-import { formatToolDuration } from "../node_modules/pi-codemode-fixture/dist/core/tools/render-utils.js";
+
+const { formatToolDuration } = await import(join(getPackageDir(), "dist/core/tools/render-utils.js")) as {
+  formatToolDuration(ms: number): string;
+};
 
 const summarize = (calls: unknown, durationMs: unknown = 42, isPartial = false) => codemodeSummary({
   toolName: "codemode", args: { code: "" }, result: { details: { calls }, durationMs }, isPartial,

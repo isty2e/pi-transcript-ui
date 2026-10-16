@@ -1,14 +1,10 @@
-import { createRequire } from "node:module";
-import { join } from "node:path";
 import { expect, it, vi } from "vitest";
-import { ToolExecutionComponent, getPackageDir, initTheme } from "pi-codemode-fixture";
-import { attachTranscriptPresentation, type NativeToolComponent, type RowTheme } from "../../src/wiring.js";
+import { ToolExecutionComponent, initTheme } from "@earendil-works/pi-coding-agent";
+import { Container, Text, stripTerminalSequences } from "@earendil-works/pi-tui";
+import { attachTranscriptPresentation, type NativeToolComponent } from "../../src/wiring.js";
+import { theme } from "../fixtures/pi-theme.js";
 
-const require = createRequire(join(getPackageDir(), "package.json"));
-const { Container, Text, stripTerminalSequences } = await import(require.resolve("@earendil-works/pi-tui")) as typeof import("@earendil-works/pi-tui");
-const { theme } = await import(join(getPackageDir(), "dist/modes/interactive/theme/theme.js")) as { theme: RowTheme };
-
-it.each(["exec_command", "write_stdin"])("preserves the real Pi 1.2 %s component and its current native title", name => {
+it.each(["exec_command", "write_stdin"])("preserves the selected host %s component and its current native title", name => {
   initTheme("dark", false);
   const parameters = name === "exec_command"
     ? { type: "object", properties: { cmd: { type: "string" } }, required: ["cmd"] }

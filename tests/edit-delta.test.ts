@@ -1,13 +1,12 @@
 import { expect, it, vi } from "vitest";
 import { NO_SUMMARY_METRICS } from "../src/tool-metrics.js";
-import { createEditToolDefinition, createWriteToolDefinition } from "@earendil-works/pi-coding-agent";
+import { createEditToolDefinition, createWriteToolDefinition, generateUnifiedPatch } from "@earendil-works/pi-coding-agent";
 import { fileMutationFor } from "../src/file-mutation.js";
 const edit = fileMutationFor(createEditToolDefinition("/tmp").parameters);
 const write = fileMutationFor(createWriteToolDefinition("/tmp").parameters);
 import { countPatchChanges, editDeltaFor } from "../src/edit-delta.js";
 import { displayFor, settledLine } from "../src/display.js";
 import { styleLine } from "../src/wiring.js";
-import { generateUnifiedPatch } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/tools/edit-diff.js";
 
 it.each([
   ["a\n", "a\nb\nc\n", 2, 0], ["a\nb\nc\n", "a\n", 0, 2],

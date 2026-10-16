@@ -2,25 +2,22 @@ import { expect, it, vi } from "vitest";
 import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:http";
-import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   createAgentSession, DefaultResourceLoader, getPackageDir, initTheme, ModelRuntime, SessionManager, SettingsManager,
-  ToolExecutionComponent, type ExtensionFactory,
-} from "pi-codemode-fixture";
-import type { CodemodeToolDetails } from "../../node_modules/pi-codemode-fixture/dist/extensions/codemode/tool.js";
+  ToolExecutionComponent, type ExtensionFactory, type CodemodeToolDetails,
+} from "@earendil-works/pi-coding-agent";
+import { Container, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import transcriptUi from "../../src/index.js";
-import { attachTranscriptPresentation, type RowTheme } from "../../src/wiring.js";
+import { attachTranscriptPresentation } from "../../src/wiring.js";
+import { theme } from "../fixtures/pi-theme.js";
 
-const fixtureRequire = createRequire(join(getPackageDir(), "package.json"));
-const { Container, stripTerminalSequences, visibleWidth } = await import(fixtureRequire.resolve("@earendil-works/pi-tui")) as typeof import("@earendil-works/pi-tui");
-const nativeTheme = await import(join(getPackageDir(), "dist/modes/interactive/theme/theme.js")) as { theme: RowTheme };
 const { createCodemodeExtension } = await import(join(getPackageDir(), "dist/extensions/codemode/index.js")) as {
   createCodemodeExtension: (options: { models: boolean }) => ExtensionFactory;
 };
 
-it("summarizes actual Pi 1.2 execution, progress and persisted results without replacing native bodies", async () => {
+it("summarizes actual host execution, progress and persisted results without replacing native bodies", async () => {
   const directory = await mkdtemp(join(tmpdir(), "transcript-codemode-"));
   vi.stubEnv("PI_TRANSCRIPT_UI_SETTINGS", join(directory, "transcript-settings.json"));
   initTheme("dark", false);
@@ -72,7 +69,7 @@ it("summarizes actual Pi 1.2 execution, progress and persisted results without r
     extensionFactories: [fixture, createCodemodeExtension({ models: false }), transcriptUi as unknown as ExtensionFactory] });
   const root = new Container(), chat = new Container();
   root.addChild(chat);
-  const attach = () => attachTranscriptPresentation(root, { getTheme: () => nativeTheme.theme, requestRender: vi.fn() });
+  const attach = () => attachTranscriptPresentation(root, { getTheme: () => theme, requestRender: vi.fn() });
   let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
   let dispose: ReturnType<typeof attach> | undefined;
   let component: ToolExecutionComponent | undefined;

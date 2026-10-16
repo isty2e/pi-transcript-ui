@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 import { Container, Text, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { initTheme, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
+import { theme } from "../fixtures/pi-theme.js";
 import { attachTranscriptPresentation, type NativeToolComponent } from "../../src/wiring.js";
 import { ToolNavigation } from "../../src/navigation.js";
 import { nativeTool, nativeTranscript } from "./fixtures/native-components.js";
