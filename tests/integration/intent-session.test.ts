@@ -1,6 +1,8 @@
 import { expect, it, vi } from "vitest";
 import { createServer } from "node:http";
 import { once } from "node:events";
+import { findPackageJSON } from "node:module";
+import { pathToFileURL } from "node:url";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,7 +16,9 @@ it("real provider → awaited AgentSession message_end → cached validation →
   const requests: Record<string, any>[] = [];
   const executed: unknown[] = [], prepared: unknown[] = [], errors: unknown[] = [];
   const schema = Object.freeze({ type: "object", properties: Object.freeze({ value: { type: "string" } }), required: ["value"], additionalProperties: false });
-  const validatorPath = join(getPackageDir(), "node_modules/@earendil-works/pi-ai/dist/utils/validation.js");
+  const aiPackage = findPackageJSON("@earendil-works/pi-ai", pathToFileURL(join(getPackageDir(), "package.json")));
+  if (!aiPackage) throw new Error("Host Pi AI package was not found");
+  const validatorPath = new URL("./dist/utils/validation.js", pathToFileURL(aiPackage)).href;
   const { validateToolArguments } = await import(validatorPath);
   validateToolArguments({ name: "strict_fixture", parameters: schema }, { name: "strict_fixture", arguments: { value: "prime cache" } });
   const server = createServer(async (req, res) => {

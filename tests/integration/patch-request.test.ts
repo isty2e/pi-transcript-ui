@@ -1,8 +1,7 @@
 import { expect, it, vi } from "vitest";
 import { Container, Text, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
-import { createEditToolDefinition, createReadToolDefinition, createWriteToolDefinition, initTheme, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { generateUnifiedPatch } from "../../node_modules/@earendil-works/pi-coding-agent/dist/core/tools/edit-diff.js";
-import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
+import { createEditToolDefinition, createReadToolDefinition, createWriteToolDefinition, generateUnifiedPatch, initTheme, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { theme } from "../fixtures/pi-theme.js";
 import { attachTranscriptPresentation, type NativeToolComponent } from "../../src/wiring.js";
 import type { ToolGroupingRules } from "../../src/classify.js";
 import { ToolNavigation } from "../../src/navigation.js";

@@ -1,10 +1,12 @@
 import { expect, it, vi } from "vitest";
-import { initTheme, ToolExecutionComponent, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Container, Text, TuiAltScreen, visibleWidth, stripTerminalSequences, type Terminal } from "../../node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/dist/index.js";
-import { AssistantMessageComponent } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/components/assistant-message.js";
-import { createChatViewport } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/chat-viewport.js";
+import { join } from "node:path";
+import { initTheme, getPackageDir, ToolExecutionComponent, AssistantMessageComponent, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Container, Text, TuiAltScreen, visibleWidth, stripTerminalSequences, type Terminal } from "@earendil-works/pi-tui";
 import { attachTranscriptPresentation, type NativeToolComponent } from "../../src/wiring.js";
 import { ToolNavigation, navigationComponent } from "../../src/navigation.js";
+
+const { createChatViewport } = await import(join(getPackageDir(), "dist/modes/interactive/chat-viewport.js")) as
+  typeof import("../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/chat-viewport.js");
 
 function fixture() {
   initTheme();
@@ -99,7 +101,7 @@ it("routes native fullscreen SGR press/release through the actual viewport witho
   let input: (data: string) => void = () => {};
   const terminal: Terminal = { columns: 100, rows: 50, kittyProtocolActive: false,
     start: (onInput) => { input = onInput; }, stop: vi.fn(), drainInput: async () => {}, write: vi.fn(), moveBy: vi.fn(),
-    hideCursor: vi.fn(), showCursor: vi.fn(), clearLine: vi.fn(), clearFromCursor: vi.fn(), clearScreen: vi.fn(), setTitle: vi.fn(), setProgress: vi.fn() };
+    hideCursor: vi.fn(), showCursor: vi.fn(), clearLine: vi.fn(), clearFromCursor: vi.fn(), clearScreen: vi.fn(), setTitle: vi.fn(), setProgress: vi.fn(), setProgramStatus: vi.fn() };
   const tui = new TuiAltScreen(terminal);
   const viewport = createChatViewport({ document: h.document, pendingMessages: new Container(), status: new Container(), editor: new Text("EDITOR"), footer: new Text("FOOTER") });
   tui.addChild(h.document); tui.setLayoutRoot(viewport.root);

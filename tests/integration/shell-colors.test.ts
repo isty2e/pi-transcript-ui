@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 import { initTheme, highlightCode, createBashToolDefinition } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
-import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
+import { theme } from "../fixtures/pi-theme.js";
 import { attachTranscriptPresentation } from "../../src/wiring.js";
 import * as shellColors from "../../src/shell-colors.js";
 import { nativeTool, nativeTranscript } from "./fixtures/native-components.js";

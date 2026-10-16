@@ -159,7 +159,11 @@ it("hides historical fallback, upgrades retries to genuine intent, and restores 
 it("executes validation of optional/nullable purpose for actual Completions and Responses strict variants", async () => {
   const { getPackageDir } = await import("@earendil-works/pi-coding-agent");
   const { join } = await import("node:path");
-  const { validateToolArguments } = await import(join(getPackageDir(), "node_modules/@earendil-works/pi-ai/dist/utils/validation.js"));
+  const { findPackageJSON } = await import("node:module");
+  const { pathToFileURL } = await import("node:url");
+  const aiPackage = findPackageJSON("@earendil-works/pi-ai", pathToFileURL(join(getPackageDir(), "package.json")));
+  if (!aiPackage) throw new Error("Host Pi AI package was not found");
+  const { validateToolArguments } = await import(new URL("./dist/utils/validation.js", pathToFileURL(aiPackage)).href);
   for (const nested of [true, false]) for (const strict of [undefined, false, true, null]) {
     const transport = new IntentTransport(vi.fn());
     const declaration = { name: "custom", parameters: schema, ...(strict === undefined ? {} : { strict }) };

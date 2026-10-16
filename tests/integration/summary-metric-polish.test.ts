@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Container, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
-import { createWriteToolDefinition, createBashToolDefinition, initTheme, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
+import { createWriteToolDefinition, createBashToolDefinition, defineTool, initTheme, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
 import { attachTranscriptPresentation } from "../../src/wiring.js";
 const theme = { bold: (s: string) => s, fg: (_kind: string, s: string) => s };
 
@@ -13,7 +13,7 @@ it("uses real Write contents, keeps native bodies, and handles partial/error/rec
   const root = new Container(), chat = new Container(); root.addChild(chat);
   let detach = attachTranscriptPresentation(root, { getTheme: () => theme, requestRender: vi.fn() });
   try {
-    const definition = { ...createWriteToolDefinition(dir), name: "renamed_writer" };
+    const definition = defineTool({ ...createWriteToolDefinition(dir), name: "renamed_writer" });
     const args = { path: "file.txt", content: "a\nb\nc\n" };
     const output = await definition.execute("write", args, undefined, undefined, {} as never);
     expect(await readFile(join(dir, args.path), "utf8")).toBe(args.content);
@@ -49,7 +49,7 @@ it("does not sum Write receipts when writers are explicitly grouped as explorati
   initTheme();
   const root = new Container(), chat = new Container(); root.addChild(chat);
   for (const id of ['one', 'two']) {
-    const definition = { ...createWriteToolDefinition('/tmp'), name: 'writer' };
+    const definition = defineTool({ ...createWriteToolDefinition('/tmp'), name: 'writer' });
     const tool = new ToolExecutionComponent('writer', id, { path: id, content: 'a\nb' }, {}, definition, { requestRender: vi.fn() } as never, '/tmp');
     tool.updateResult({ content: [{ type: 'text', text: 'receipt' }], isError: false }); chat.addChild(tool);
   }

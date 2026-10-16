@@ -1,11 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { initTheme, createEditToolDefinition, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Container, Text, type Component } from "@earendil-works/pi-tui";
-import { getCapabilities, setCapabilities } from "../node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/dist/index.js";
+import { initTheme, createEditToolDefinition, ToolExecutionComponent, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Container, Text, getCapabilities, setCapabilities, type Component } from "@earendil-works/pi-tui";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ToolExecutionComponent } from "../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/components/tool-execution.js";
 import { attachTranscriptPresentation, type NativeToolComponent } from "../src/wiring.js";
 import { defaultSettings, groupingRules } from "../src/settings.js";
 

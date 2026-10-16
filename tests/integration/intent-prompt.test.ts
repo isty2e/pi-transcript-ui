@@ -3,27 +3,22 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
-  DefaultResourceLoader, ExtensionRunner, getPackageDir, ModelRegistry, ModelRuntime, SessionManager, SettingsManager,
-  type BuildSystemPromptOptions, type ExtensionError,
-} from "@earendil-works/pi-coding-agent";
-import {
-  DefaultResourceLoader as StructuredLoader, ExtensionRunner as StructuredRunner, getPackageDir as getStructuredPackageDir,
+  DefaultResourceLoader as StructuredLoader, ExtensionRunner as StructuredRunner, getPackageDir as getStructuredPackageDir, VERSION,
   ModelRegistry as StructuredRegistry, ModelRuntime as StructuredRuntime, SessionManager as StructuredSessions,
   SettingsManager as StructuredSettings, type BuildSystemPromptOptions as StructuredPromptOptions,
   type ExtensionError as StructuredError, type ExtensionFactory as StructuredFactory, type ExtensionUIContext as StructuredUI,
-} from "pi-structured-prompt-fixture";
+} from "@earendil-works/pi-coding-agent";
+import type { ExtensionRunner as CompatiblePromptRunner } from "pi-compat-fixture";
 import transcriptUi from "../../src/index.js";
 import { intentGuideline } from "../../src/intent.js";
 import { defaultSettings } from "../../src/settings.js";
+import { piCapabilities } from "../fixtures/pi-capabilities.js";
 
 const { buildSystemPrompt: renderStructured } = await import(join(getStructuredPackageDir(), "dist/core/system-prompt.js")) as {
   buildSystemPrompt: (options: StructuredPromptOptions) => string;
 };
-const { buildSystemPrompt: renderLegacy } = await import(join(getPackageDir(), "dist/core/system-prompt.js")) as {
-  buildSystemPrompt: (options: BuildSystemPromptOptions) => string;
-};
 const sectionName = "pi_transcript_ui_intent";
-const structuredTranscriptUi = transcriptUi as unknown as StructuredFactory;
+const structuredTranscriptUi: StructuredFactory = transcriptUi;
 let directory: string;
 let settingsPath: string;
 
@@ -50,23 +45,13 @@ async function structuredRunner(factories: StructuredFactory[] = [structuredTran
   runner.onError(error => errors.push(error));
   await runner.emit({ type: "session_start", reason: "startup" });
   expect(errors).toEqual([]);
-  return { runner, errors };
-}
+  const capabilities = piCapabilities(VERSION);
+  if (capabilities.promptApi === "legacy-string") throw new Error("This suite requires structured system prompts");
+  const start = (prompt: string, options: StructuredPromptOptions) => capabilities.promptApi === "structured-trigger"
+    ? runner.emitBeforeAgentStart({ messageType: "user", prompt }, options)
+    : (runner as unknown as CompatiblePromptRunner).emitBeforeAgentStart(prompt, undefined, options);
 
-async function legacyRunner() {
-  const loader = new DefaultResourceLoader({ cwd: directory, agentDir: directory, settingsManager: SettingsManager.inMemory(),
-    noExtensions: true, noSkills: true, noThemes: true, noPromptTemplates: true, noContextFiles: true, extensionFactories: [transcriptUi] });
-  await loader.reload();
-  const { extensions, runtime, errors: loadErrors } = loader.getExtensions();
-  expect(loadErrors).toEqual([]);
-  const models = await ModelRuntime.create({ authPath: join(directory, "auth.json"), modelsPath: null,
-    modelsStorePath: join(directory, "models"), refreshOnCreate: false });
-  const runner = new ExtensionRunner(extensions, runtime, directory, SessionManager.inMemory(directory), new ModelRegistry(models));
-  const errors: ExtensionError[] = [];
-  runner.onError(error => errors.push(error));
-  await runner.emit({ type: "session_start", reason: "startup" });
-  expect(errors).toEqual([]);
-  return { runner, errors };
+  return { runner, errors, start };
 }
 
 async function saveIntent(runner: StructuredRunner, selections: string[]) {
@@ -93,14 +78,14 @@ it.each(["before", "after"] as const)("composes structured sections when the oth
       expect(ctx.getSystemPrompt()).toBe(event.systemPrompt);
     });
   };
-  const { runner, errors } = await structuredRunner(order === "before"
+  const { runner, errors, start } = await structuredRunner(order === "before"
     ? [probe, structuredTranscriptUi] : [structuredTranscriptUi, probe]);
   const options: StructuredPromptOptions = { cwd: directory, customPrompt: "Original instructions",
     sections: Object.freeze({ existing: "Existing section instructions" }) };
   let current = options;
 
   for (let turn = 0; turn < 3; turn++) {
-    const result = await runner.emitBeforeAgentStart("Inspect the workspace", undefined, current);
+    const result = await start("Inspect the workspace", current);
     current = result.systemPromptOptions;
     const text = renderStructured(current);
     expect(current.forceSystemPrompt).toBeUndefined();
@@ -118,20 +103,20 @@ it.each(["before", "after"] as const)("composes structured sections when the oth
 });
 
 it("replaces language and removes only its section after saved settings changes, then restores it on re-enable", async () => {
-  const { runner, errors } = await structuredRunner();
-  let result = await runner.emitBeforeAgentStart("First turn", undefined, { cwd: directory, customPrompt: "Original instructions",
+  const { runner, errors, start } = await structuredRunner();
+  let result = await start("First turn", { cwd: directory, customPrompt: "Original instructions",
     sections: { unrelated: "Keep this section" } });
   expect(renderStructured(result.systemPromptOptions).split(intentGuideline("auto"))).toHaveLength(2);
 
   await saveIntent(runner, ["Intent", "Intent language: auto", "en", "Back", "Save"]);
-  result = await runner.emitBeforeAgentStart("Next turn", undefined, result.systemPromptOptions);
+  result = await start("Next turn", result.systemPromptOptions);
   const english = renderStructured(result.systemPromptOptions);
   expect(english.split(intentGuideline("en"))).toHaveLength(2);
   expect(english).not.toContain(intentGuideline("auto"));
   expect(result.systemPromptOptions.forceSystemPrompt).toBeUndefined();
 
   await saveIntent(runner, ["Intent", "Intent: on", "Back", "Save"]);
-  result = await runner.emitBeforeAgentStart("Disabled turn", undefined, result.systemPromptOptions);
+  result = await start("Disabled turn", result.systemPromptOptions);
   const disabled = renderStructured(result.systemPromptOptions);
   expect(disabled).not.toContain("displaySummary");
   expect(result.systemPromptOptions.sections).toEqual({ unrelated: "Keep this section" });
@@ -140,7 +125,7 @@ it("replaces language and removes only its section after saved settings changes,
   expect(result.systemPromptOptions.forceSystemPrompt).toBeUndefined();
 
   await saveIntent(runner, ["Intent", "Intent: off", "Back", "Save"]);
-  result = await runner.emitBeforeAgentStart("Re-enabled turn", undefined, result.systemPromptOptions);
+  result = await start("Re-enabled turn", result.systemPromptOptions);
   expect(renderStructured(result.systemPromptOptions).split(intentGuideline("en"))).toHaveLength(2);
   expect(result.systemPromptOptions.sections?.unrelated).toBe("Keep this section");
   expect(errors).toEqual([]);
@@ -150,9 +135,9 @@ it("starts disabled without contributing guidance or altering existing structure
   const settings = defaultSettings();
   settings.intent.enabled = false;
   await writeFile(settingsPath, JSON.stringify(settings));
-  const { runner, errors } = await structuredRunner();
+  const { errors, start } = await structuredRunner();
   const options: StructuredPromptOptions = { cwd: directory, customPrompt: "Original instructions", sections: { other: "Other instructions" } };
-  const result = await runner.emitBeforeAgentStart("Disabled turn", undefined, options);
+  const result = await start("Disabled turn", options);
   expect(renderStructured(result.systemPromptOptions)).toBe(renderStructured(options));
   expect(result.systemPromptOptions.forceSystemPrompt).toBeUndefined();
   expect(errors).toEqual([]);
@@ -162,9 +147,9 @@ it.each(["before", "after"] as const)("preserves an opaque prompt returned by an
   const opaque: StructuredFactory = pi => {
     pi.on("before_agent_start", () => ({ systemPrompt: "Authoritative opaque prompt" }));
   };
-  const { runner, errors } = await structuredRunner(order === "before"
+  const { errors, start } = await structuredRunner(order === "before"
     ? [opaque, structuredTranscriptUi] : [structuredTranscriptUi, opaque]);
-  const result = await runner.emitBeforeAgentStart("First turn", undefined, { cwd: directory, sections: { other: "Keep this section" } });
+  const result = await start("First turn", { cwd: directory, sections: { other: "Keep this section" } });
   expect(result.systemPromptOptions.forceSystemPrompt).toBe("Authoritative opaque prompt");
   expect(renderStructured(result.systemPromptOptions)).toBe("Authoritative opaque prompt");
   expect(result.systemPromptOptions.sections?.other).toBe("Keep this section");
@@ -172,34 +157,10 @@ it.each(["before", "after"] as const)("preserves an opaque prompt returned by an
 });
 
 it("does not clear or append to an explicitly empty forced prompt", async () => {
-  const { runner, errors } = await structuredRunner();
-  const result = await runner.emitBeforeAgentStart("First turn", undefined, { cwd: directory, forceSystemPrompt: "", sections: { other: "Keep this section" } });
+  const { errors, start } = await structuredRunner();
+  const result = await start("First turn", { cwd: directory, forceSystemPrompt: "", sections: { other: "Keep this section" } });
   expect(result.systemPromptOptions.forceSystemPrompt).toBe("");
   expect(renderStructured(result.systemPromptOptions)).toBe("");
   expect(result.systemPromptOptions.sections?.other).toBe("Keep this section");
-  expect(errors).toEqual([]);
-});
-
-it("appends guidance through the real legacy runner even though legacy systemPromptOptions exists", async () => {
-  const { runner, errors } = await legacyRunner();
-  const options: BuildSystemPromptOptions = { cwd: directory, customPrompt: "Original legacy instructions", appendSystemPrompt: "Other legacy instructions" };
-  const original = renderLegacy(options);
-  for (let turn = 0; turn < 3; turn++) {
-    const result = await runner.emitBeforeAgentStart("Legacy turn", undefined, original, options);
-    expect(result?.systemPrompt).toBe(`${original}\n\n${intentGuideline("auto")}`);
-  }
-  expect(options).toEqual({ cwd: directory, customPrompt: "Original legacy instructions", appendSystemPrompt: "Other legacy instructions" });
-  expect(errors).toEqual([]);
-});
-
-it("leaves the real legacy prompt unchanged when intent is disabled", async () => {
-  const settings = defaultSettings();
-  settings.intent.enabled = false;
-  await writeFile(settingsPath, JSON.stringify(settings));
-  const { runner, errors } = await legacyRunner();
-  const options: BuildSystemPromptOptions = { cwd: directory, customPrompt: "Original legacy instructions" };
-  const original = renderLegacy(options);
-  const result = await runner.emitBeforeAgentStart("Disabled legacy turn", undefined, original, options);
-  expect(result?.systemPrompt ?? original).toBe(original);
   expect(errors).toEqual([]);
 });

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Container, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { createEditToolDefinition, initTheme, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
-import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
+import { theme } from "../fixtures/pi-theme.js";
 import { attachTranscriptPresentation } from "../../src/wiring.js";
 
 it.each(["dark", "light"])("uses actual edit results and %s theme without changing the native body", async (themeName) => {

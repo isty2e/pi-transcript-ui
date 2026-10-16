@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 import { initTheme, highlightCode } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
-import { theme } from "../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
+import { theme } from "./fixtures/pi-theme.js";
 import { commandPreview, commandPreviewPlan } from "../src/command-preview.js";
 import { createCommandColorizer } from "../src/shell-colors.js";
 

@@ -2,11 +2,23 @@
 
 [Back to README](../README.md)
 
-pi-transcript-ui presents tool summaries in interactive Pi sessions. Pi 0.85.1 is the checked runtime version. Other versions and arbitrary combinations of UI extensions are not assured to work.
+pi-transcript-ui presents tool summaries in interactive Pi sessions. Compatibility outside the tested surfaces below, including arbitrary combinations of UI extensions, is not assured.
 
-[Codemode summaries](usage.md#codemode) have additional targeted coverage on Pi 1.2.0: real sandbox execution, partial updates, saved results and native expanded-body rendering. This is not full terminal or compositor coverage for Pi 1.2.0, nor does the extension add codemode to older hosts.
+## Tested hosts
 
-[Shell-session summaries](usage.md#shell-sessions) are tested with provider-shaped requests and receipts and real native tool components on Pi 0.85.1 and 1.2.0. These component tests do not run the external providers, Pi's extension loader or a complete terminal/compositor session on 1.2.0.
+| Pi host | Current test coverage |
+| --- | --- |
+| 1.3.0 | Primary suite: summaries, intent transport and persistence, native components, grouping, navigation and compositor fixtures |
+| 1.1.0 | Shared UI/session/compositor fixtures, structured prompts and native codemode execution |
+| 0.85.1 | Shared UI/session/compositor fixtures and legacy string prompts; no native codemode |
+
+Each host uses matching versions of its Pi runtime dependencies, including core, AI and TUI, plus codemode and MCP where present. Vitest isolates test execution and binds this extension to the selected SDK/TUI. Compatibility hosts share a focused set of native UI, grouping/navigation, compositor and session/prompt checks. Unit, parser, detailed formatting and publication-workflow tests run only on the primary host.
+
+Test admission follows release capabilities: structured prompt sections from 0.86.0, native codemode from 0.99.0, recorded tool duration from 1.1.0 and trigger-object prompt hooks from 1.2.0. Only the representative hosts listed above are exercised. These component, session and compositor-fixture tests do not establish complete interactive terminal sessions or compatibility with every release in those ranges.
+
+[Codemode coverage](usage.md#codemode) includes real sandbox execution, partial updates, saved results and native expanded-body rendering. The extension does not add codemode to older hosts.
+
+[Shell-session summaries](usage.md#shell-sessions) use provider-shaped requests and receipts with real native tool components. These tests do not execute the external providers or run the presentation extension through Pi's extension loader.
 
 ## Input support
 
@@ -48,7 +60,7 @@ On Pi hosts with structured system prompts, intent guidance uses the `pi_transcr
 
 On structured hosts, an explicit full-prompt override from another extension remains authoritative. This extension does not clear or rewrite that override to insert intent guidance, so the guidance may be absent. Composing sections into another extension's opaque override is unsupported; it requires cooperation from the override's owner.
 
-Prompt composition is tested separately on Pi 0.99.1. This does not establish compatibility of the entire UI with that version.
+See [tested hosts](#tested-hosts) for shared UI checks and version-appropriate prompt coverage.
 
 ## Troubleshooting
 

@@ -2,21 +2,25 @@
 
 Compact tool summaries for Pi, with optional purpose text and groups of adjacent calls. Tool execution and expanded output remain Pi's own.
 
-A collapsed Read group, an expanded Edit group and a standalone command:
+A collapsed Read group, an expanded Edit group, [shell-session calls](docs/usage.md#shell-sessions) and [native codemode](docs/usage.md#codemode):
 
 ```text
 ▸ Read 2 files (4 lines)
 ▾ Edited 2 calls (+3 -2)
   ▸ Edit src/config.ts (+2 -1) — Update configuration
   ▸ Edit src/defaults.ts (+1 -1) — Adjust defaults
-▸ Run npm test && git diff --check — Verify changes
+▸ Run npm test (exit 0) — Verify changes
+▸ Check output (exit 0)
+▸ Code read ×2, bash (3 nested calls; 1.2s)
 ```
 
 Expand an individual call to see its original output. Read groups count files; mutation groups count calls, not unique files. Counts are shown only when usable evidence is available.
 
 ## Install
 
-Requires [Pi](https://pi.dev) and Node.js 22.19 or newer. The extension has been checked with Pi 0.85.1; compatibility with other versions is not assured.
+Requires [Pi](https://pi.dev) and Node.js 22.19 or newer. Pi 1.3.0 is the primary tested host; compatibility with other versions is not assured.
+
+Shared UI checks also run on Pi 1.1.0 and 0.85.1, with prompt and codemode cases selected by host capabilities. These are not complete interactive terminal tests. See [tested hosts and coverage](docs/compatibility.md#tested-hosts) for scope and limitations.
 
 Install from npm (recommended):
 
@@ -55,7 +59,7 @@ The default summary width is 120 terminal columns, or the available viewport wid
 **Command preview** offers two modes:
 
 - **Compact** (default): shares space across command names and shortens supported Bash syntax.
-- **Raw**: shows the original first line within the same width limits, without compact transformations.
+- **Raw**: shows the original first line within the same width limits, without compact transformations. `[…]` marks omitted non-blank lines when space permits.
 
 Summaries are not executable replacement commands or proof that every displayed command ran. Expand the tool when you need exact arguments or output.
 
