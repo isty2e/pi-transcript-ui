@@ -41,7 +41,7 @@ export type DisplayTarget =
   | Readonly<{ kind: "none" }>
   | Readonly<{ kind: "path"; path: string }>
   | Readonly<{ kind: "query"; query: string }>
-  | Readonly<{ kind: "command"; command: string; shell?: "powershell" }>
+  | Readonly<{ kind: "command"; command: string; shell?: "powershell" | "zsh" }>
   | Readonly<{ kind: "opaque-command"; command: string }>
   | Readonly<{ kind: "patch-request"; request: PatchRequest }>
   | Readonly<{ kind: "nested-calls"; calls: CodemodeSummary["calls"] }>;
@@ -264,9 +264,11 @@ export function runningLine(
 export function shellSessionLine(summary: ShellSessionSummary, isError: boolean, isPartial: boolean,
   context: ToolSummaryContext = {}): LineParts {
   const outcome = `${isError ? " — error" : ""}${summary.exitCode === undefined ? "" : ` (exit ${summary.exitCode})`}`;
-  return summaryParts(summary.action, { action: summary.action, target: summary.action === "Run"
-    ? { kind: summary.commandSyntax === "bash" ? "command" : "opaque-command", command: summary.command }
-    : { kind: "none" } }, outcome, isPartial, context);
+  const target: DisplayTarget = summary.action !== "Run" ? { kind: "none" }
+    : !summary.commandSyntax ? { kind: "opaque-command", command: summary.command }
+    : { kind: "command", command: summary.command, ...(summary.commandSyntax === "zsh" ? { shell: summary.commandSyntax } : {}) };
+
+  return summaryParts(summary.action, { action: summary.action, target }, outcome, isPartial, context);
 }
 
 function toolDurationText(ms: number): string {

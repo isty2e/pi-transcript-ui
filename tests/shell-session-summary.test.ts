@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { shellSessionSummary } from "../src/shell-session-summary.js";
 import { displayFor, joinLine, runningLine, shellSessionLine, targetText } from "../src/display.js";
+import { styleLine } from "../src/wiring.js";
 
 const schema = (name: string, extras: Record<string, unknown> = {}) => ({ type: "object",
   properties: { [name === "exec_command" ? "cmd" : "session_id"]: { type: name === "exec_command" ? "string" : "number" },
@@ -55,9 +56,24 @@ it("honors Raw rather than forcing Compact for a known Bash executable", () => {
     runningLine("bash", displayFor("bash", { command: chain }), undefined, layout));
 });
 
-it.each([undefined, "", "/bin/zsh", "/bin/fish", "sh", "pwsh", "cmd.exe", "/bin/mybash", "/bin/bash-wrapper",
-  "/bin/bash -lc", "/usr/bin/env bash", "/bin/bash/", "/bin/bash\n", 12])(
-  "keeps unavailable or non-Bash shell evidence opaque: %j", shell => {
+it.each(["zsh", "/bin/zsh", "/usr/local/bin/zsh", "/opt/homebrew/bin/zsh", "/nix/store/custom/bin/zsh",
+  "/Volumes/Custom Tools/bin/zsh", "zsh.exe", "C:\\Program Files\\zsh\\zsh.exe"])(
+  "uses plain zsh Compact rather than Bash coloring for explicit executable %j", shell => {
+    const summary = summarize("exec_command", { cmd: chain, shell }, undefined, schema("exec_command", { shell: { type: "string" } }))!;
+    const layout = { width: 72 };
+    const parts = shellSessionLine(summary, false, true, { layout });
+    expect(joinLine(parts)).toMatch(/&&.*\|\|.*\|/);
+    const color = () => { throw Error("Bash colorizer must not parse zsh"); };
+    const theme = { bold: (text: string) => text, fg: (_color: string, text: string) => text };
+    expect(styleLine(theme, parts, false, color)).toBe(joinLine(parts));
+    expect(shellSessionLine(summary, false, true, { layout: { ...layout, limits: { commandPreview: "raw" } } }))
+      .toEqual(rawExecLine(chain, 72));
+  },
+);
+
+it.each([undefined, "", "/bin/fish", "sh", "pwsh", "cmd.exe", "/bin/mybash", "/bin/bash-wrapper",
+  "/bin/bash -lc", "/usr/bin/env bash", "/bin/bash/", "/bin/bash\n", "/bin/myzsh", "/bin/zsh -fc", "/bin/zsh/", "/bin/zsh\n", 12])(
+  "keeps unavailable or unsupported shell evidence opaque: %j", shell => {
     const summary = summarize("exec_command", { cmd: chain, shell }, undefined,
       schema("exec_command", { shell: { type: "string", default: "/bin/bash" } }))!;
     for (const width of [24, 72]) {
@@ -66,14 +82,14 @@ it.each([undefined, "", "/bin/zsh", "/bin/fish", "sh", "pwsh", "cmd.exe", "/bin/
   },
 );
 
-it("does not infer Bash from an undeclared shell, schema default or command prefix", () => {
+it.each(["bash", "zsh"])("does not infer %s from an undeclared shell, schema default or command prefix", shell => {
   for (const parameters of [schema("exec_command"), schema("exec_command", { shell: { type: "number" } })]) {
-    const summary = summarize("exec_command", { cmd: chain, shell: "/bin/bash" }, undefined, parameters)!;
+    const summary = summarize("exec_command", { cmd: chain, shell: `/bin/${shell}` }, undefined, parameters)!;
     expect(shellSessionLine(summary, false, true)).toEqual(rawExecLine(chain));
   }
-  const command = `bash -lc '${chain}'`;
+  const command = `${shell} -lc '${chain}'`;
   const summary = summarize("exec_command", { cmd: command }, undefined,
-    schema("exec_command", { shell: { type: "string", default: "/bin/bash" } }))!;
+    schema("exec_command", { shell: { type: "string", default: `/bin/${shell}` } }))!;
   expect(shellSessionLine(summary, false, true)).toEqual(rawExecLine(command));
 });
 
