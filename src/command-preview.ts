@@ -212,10 +212,6 @@ function stages(command: string, tracing: boolean, opaqueHeads: ReadonlySet<stri
     if (char === "'" || char === '"') { quote = char; append(char, i); continue; }
     if ("(){}".includes(char) || (char === "#" && !word)) return tail();
     if (char === "<" || char === ">") {
-      let nextIndex = i + 1;
-      while (command[nextIndex] === "\\" && command[nextIndex + 1] === "\n") nextIndex += 2;
-      if (char === "<" && nextIndex !== i + 1 && command[nextIndex] === "<") return tail();
-
       const next = command[i + 1];
       if (char === "<" && next === "<" && command[i + 2] !== "<") {
         const header = heredocAt(command, i);
@@ -230,12 +226,18 @@ function stages(command: string, tracing: boolean, opaqueHeads: ReadonlySet<stri
         i = header.end - 1;
         continue;
       }
-      if (next === "(" || next === "&" || next === "|" || (char === "<" && (next === "<" || next === ">"))) return tail();
+      let nextIndex = i + 1;
+      while (command[nextIndex] === "\\" && command[nextIndex + 1] === "\n") nextIndex += 2;
+      const appendIndex = char === ">" && command[nextIndex] === ">" ? nextIndex : undefined;
+      let followingIndex = appendIndex === undefined ? nextIndex : appendIndex + 1;
+      while (command[followingIndex] === "\\" && command[followingIndex + 1] === "\n") followingIndex += 2;
+      const following = command[followingIndex];
+      if (following === "(" || following === "&" || following === "|" || following === ">" || (char === "<" && following === "<")) return tail();
       if (!/^\d+$/.test(word)) flush();
       if (!executable) return tail();
       if (words.length > 256) return undefined;
       append(char, i);
-      if (char === ">" && next === ">") { append(next, i + 1); i++; }
+      if (appendIndex !== undefined) { append(">", appendIndex); i = appendIndex; }
       continue;
     }
     if (char === " " || char === "\t") {

@@ -188,6 +188,11 @@ it.each(["bash", "zsh"])("rechecks explicit %s preview evidence and Raw selectio
     tool.updateArgs(args);
     expect(header()).toContain("Run npm test ↵ repeat […]");
     expect(header()).not.toMatch(/HIDDEN|AFTER/);
+    args.shell = `/bin/${shell}`;
+    args.cmd = "npm test\nprintf x >>| REDIRECTION_TARGET\nprintf AFTER";
+    tool.updateArgs(args);
+    expect(header()).toContain("Run npm test ↵ printf […]");
+    expect(header()).not.toMatch(/REDIRECTION_TARGET|AFTER/);
     args.cmd = command;
 
     args.shell = "/bin/fish"; tool.updateArgs(args);
