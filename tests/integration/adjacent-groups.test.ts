@@ -60,7 +60,7 @@ it.each(["read", "write", "edit"])("groups restored %s calls across separate emp
   expect(render(chat)).toContain(expected);
   detach.targets()[0]!.setExpanded(true);
   if (name !== "read") {
-    expect(render(chat)).toContain(name === "write" ? "Write a" : "Edit a");
+    expect(render(chat)).toContain(name === "write" ? "Wrote a" : "Edited a");
     expect(render(chat)).not.toContain("(1 line)");
   }
   detach(); expect(second.updateContent).toBe(original);

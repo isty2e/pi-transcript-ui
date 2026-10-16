@@ -19,7 +19,7 @@ it.each(["running", "success", "error"] as const)("colors only the intent and it
   expect(shown).toContain(`echo '${purpose}'`);
   expect(stripTerminalSequences(shown)).toBe(joinLine(parts));
   if (state === "running") expect(shown).toMatch(/\x1b\[39m…$/);
-  if (state === "error") expect(shown).toContain(theme.fg("error", `▸ Run echo '${purpose}' — error`));
+  if (state === "error") expect(shown).toContain(theme.fg("error", `▸ Ran echo '${purpose}' — error`));
 });
 
 it.each([undefined, "", "   "])("does not request intent coloring when purpose is absent: %s", (intent) => {

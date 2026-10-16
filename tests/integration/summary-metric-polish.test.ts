@@ -23,7 +23,7 @@ it("uses real Write contents, keeps native bodies, and handles partial/error/rec
     const native = new Map(widths.map(w => [w, tool.render(w)]));
     chat.addChild(tool);
     const summary = () => stripTerminalSequences(tool.render(120).slice(0, 2).join("\n"));
-    expect(summary()).toContain('Write file.txt (3 lines)');
+    expect(summary()).toContain('Wrote file.txt (3 lines)');
     for (const width of widths) {
       expect(tool.render(width).slice(2)).toEqual(native.get(width));
       expect(tool.render(width).slice(0, 2).every(s => visibleWidth(s) <= Math.min(width, 120))).toBe(true);
@@ -55,9 +55,9 @@ it("does not sum Write receipts when writers are explicitly grouped as explorati
   }
   const detach = attachTranscriptPresentation(root, { getTheme: () => theme, requestRender: vi.fn(), rules: { writer: 'explore' } });
   try {
-    expect(stripTerminalSequences(chat.render(120).join('\n'))).toBe('\n▸ Exploration 2 calls');
+    expect(stripTerminalSequences(chat.render(120).join('\n'))).toBe('\n▸ Explored 2 calls');
     detach.targets()[0]!.setExpanded(true);
-    expect(stripTerminalSequences(chat.render(120).join('\n'))).toContain('Write one (2 lines)');
+    expect(stripTerminalSequences(chat.render(120).join('\n'))).toContain('Wrote one (2 lines)');
   } finally { detach(); }
 });
 

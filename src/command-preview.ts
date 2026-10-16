@@ -14,6 +14,7 @@ type Before = { operator: Operator; start: number } | undefined;
 type Stage = { kind: "command"; before: Before; words: CommandPreviewPlan[] }
   | { kind: "tail"; before: Before; source: string };
 const reserved = new Set(["if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done", "case", "esac", "select", "function", "time", "coproc", "!", "[[", "]]"]);
+const zshOpaqueHeads = new Set([...reserved, "repeat", "foreach", "end", "always", "nocorrect", "noglob", "-"]);
 const subcommands = new Set(["git", "npm", "pnpm", "yarn", "bun", "uv", "pip", "cargo", "go", "docker", "kubectl", "kata"]);
 const assignment = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const widthOf = (value: CommandPreviewPlan) => visibleWidth(value.text);
@@ -62,9 +63,13 @@ function clip(value: CommandPreviewPlan, width: number): CommandPreviewPlan {
 }
 
 /** Find only simple substitution boundaries; contents never become outer command stages. */
-function substitutionEnd(source: string, start: number, depth = 1): number | undefined {
+function substitutionEnd(source: string, start: number, opaqueHeads: ReadonlySet<string>, depth = 1): number | undefined {
   if (depth > 8) return undefined;
   let quote: "'" | '"' | undefined, word = "";
+  let commandHead = true;
+  // Preserve Bash preview parity while distinguishing dialect-only words from arguments.
+  const refused = () => reserved.has(word) || (commandHead && opaqueHeads.has(word));
+
   for (let i = start + 2; i < source.length; i++) {
     const char = source[i]!;
     if (char === "\n") return undefined;
@@ -75,7 +80,7 @@ function substitutionEnd(source: string, start: number, depth = 1): number | und
     if (quote === "'") { word += char; if (char === quote) quote = undefined; continue; }
     if (char === "`") return undefined;
     if (char === "$" && source[i + 1] === "(") {
-      const end = substitutionEnd(source, i, depth + 1);
+      const end = substitutionEnd(source, i, opaqueHeads, depth + 1);
       if (end === undefined) return undefined;
       word += source.slice(i, end + 1); i = end; continue;
     }
@@ -83,9 +88,11 @@ function substitutionEnd(source: string, start: number, depth = 1): number | und
     if (quote) { word += char; if (char === quote) quote = undefined; continue; }
     if (char === "'" || char === '"') { quote = char; word += char; continue; }
     if ("(<>{}#".includes(char)) return undefined;
-    if (char === ")") return reserved.has(word) ? undefined : i;
+    if (char === ")") return refused() ? undefined : i;
     if (/[ \t|&;]/.test(char)) {
-      if (reserved.has(word)) return undefined;
+      if (refused()) return undefined;
+      if (word && !assignment.test(word)) commandHead = false;
+      if ("|&;".includes(char)) commandHead = true;
       word = "";
     } else word += char;
   }
@@ -139,8 +146,8 @@ function heredocEnd(source: string, start: number, document: Heredoc): number | 
   return undefined;
 }
 
-/** Bounded Bash preview with a known prefix and, at most, one unparsed remainder. */
-function stages(command: string, tracing: boolean): Stage[] | undefined {
+/** Bounded Bash/zsh preview with a known prefix and, at most, one unparsed remainder. */
+function stages(command: string, tracing: boolean, opaqueHeads: ReadonlySet<string>): Stage[] | undefined {
   if (command.length > COMMAND_SOURCE_LIMIT || /[\r\x00-\x08\x0b-\x1f\x7f]/.test(command)) return undefined;
   const result: Stage[] = [];
   let words: CommandPreviewPlan[] = [], word = "", before: Before, start = 0;
@@ -176,7 +183,7 @@ function stages(command: string, tracing: boolean): Stage[] | undefined {
       flush();
       if (words.length > 256 || result.length >= 64) return undefined;
       if (words.length) {
-        if (!executable || reserved.has(executable)) return tail();
+        if (!executable || opaqueHeads.has(executable)) return tail();
         result.push({ kind: "command", before, words });
         words = []; executable = undefined; before = { operator: "\n", start: i };
       }
@@ -196,7 +203,7 @@ function stages(command: string, tracing: boolean): Stage[] | undefined {
     if (quote === "'") { append(char, i); if (char === quote) quote = undefined; continue; }
     if (char === "`") return tail();
     if (char === "$" && command[i + 1] === "(") {
-      const end = substitutionEnd(command, i);
+      const end = substitutionEnd(command, i, opaqueHeads);
       if (end === undefined) return tail();
       append("$(…)", "marker"); i = end; continue;
     }
@@ -205,16 +212,12 @@ function stages(command: string, tracing: boolean): Stage[] | undefined {
     if (char === "'" || char === '"') { quote = char; append(char, i); continue; }
     if ("(){}".includes(char) || (char === "#" && !word)) return tail();
     if (char === "<" || char === ">") {
-      let nextIndex = i + 1;
-      while (command[nextIndex] === "\\" && command[nextIndex + 1] === "\n") nextIndex += 2;
-      if (char === "<" && nextIndex !== i + 1 && command[nextIndex] === "<") return tail();
-
       const next = command[i + 1];
       if (char === "<" && next === "<" && command[i + 2] !== "<") {
         const header = heredocAt(command, i);
         if (!header) return tail();
         if (!/^\d+$/.test(word)) flush();
-        if (!executable || reserved.has(executable)) return tail();
+        if (!executable || opaqueHeads.has(executable)) return tail();
         pending ??= { documents: [], count: result.length, before, start };
         pending.documents.push(header.document);
         word = ""; wordSpans = tracing ? [] : undefined;
@@ -223,24 +226,30 @@ function stages(command: string, tracing: boolean): Stage[] | undefined {
         i = header.end - 1;
         continue;
       }
-      if (next === "(" || next === "&" || next === "|" || (char === "<" && (next === "<" || next === ">"))) return tail();
+      let nextIndex = i + 1;
+      while (command[nextIndex] === "\\" && command[nextIndex + 1] === "\n") nextIndex += 2;
+      const appendIndex = char === ">" && command[nextIndex] === ">" ? nextIndex : undefined;
+      let followingIndex = appendIndex === undefined ? nextIndex : appendIndex + 1;
+      while (command[followingIndex] === "\\" && command[followingIndex + 1] === "\n") followingIndex += 2;
+      const following = command[followingIndex];
+      if (following === "(" || following === "&" || following === "|" || following === ">" || (char === "<" && following === "<")) return tail();
       if (!/^\d+$/.test(word)) flush();
       if (!executable) return tail();
       if (words.length > 256) return undefined;
       append(char, i);
-      if (char === ">" && next === ">") { append(next, i + 1); i++; }
+      if (appendIndex !== undefined) { append(">", appendIndex); i = appendIndex; }
       continue;
     }
     if (char === " " || char === "\t") {
       flush();
       if (words.length > 256) return undefined;
-      if (reserved.has(executable ?? "")) return tail();
+      if (opaqueHeads.has(executable ?? "")) return tail();
       continue;
     }
     if (char === "|" || char === "&" || char === ";") {
       flush();
       if (words.length > 256 || result.length >= 64) return undefined;
-      if (!words.length || reserved.has(executable ?? "")) return tail();
+      if (!words.length || opaqueHeads.has(executable ?? "")) return tail();
       let operator: Operator;
       const operatorStart = i;
       if (char === "&") { if (command[i + 1] !== "&") return tail(); operator = "&&"; i++; }
@@ -255,7 +264,7 @@ function stages(command: string, tracing: boolean): Stage[] | undefined {
   flush();
   if (words.length > 256 || result.length >= 64) return undefined;
   if (!words.length) return command.includes("\n") && (before?.operator === "\n" || before === undefined) ? result : undefined;
-  if (reserved.has(executable ?? "") || !executable) return tail();
+  if (opaqueHeads.has(executable ?? "") || !executable) return tail();
   result.push({ kind: "command", before, words });
   return result;
 }
@@ -277,7 +286,7 @@ function compactPath(token: CommandPreviewPlan, tracing: boolean): CommandPrevie
   return concat(slice(token, 0, prefix.length + quote.length), literal("…", tracing, "marker"), slice(token, slash));
 }
 
-function stageText(stage: Stage, tracing: boolean): { head: CommandPreviewPlan; full: CommandPreviewPlan } | undefined {
+function stageText(stage: Stage, tracing: boolean, opaqueHeads: ReadonlySet<string>): { head: CommandPreviewPlan; full: CommandPreviewPlan } | undefined {
   if (stage.kind === "tail") {
     const name = /^([A-Za-z_][A-Za-z0-9_.-]*)(?=[ \t\n]|$)/.exec(stage.source)?.[1];
     const text = literal(name ? `${clip(literal(name, tracing), 20).text} […]` : "[…]", tracing);
@@ -286,7 +295,7 @@ function stageText(stage: Stage, tracing: boolean): { head: CommandPreviewPlan; 
   let index = 0;
   while (assignment.test(stage.words[index]?.text ?? "")) index++;
   const executable = stage.words[index]?.text;
-  if (!executable || reserved.has(executable)) return undefined;
+  if (!executable || opaqueHeads.has(executable)) return undefined;
   const tokens = stage.words.slice(index).map(token => compactPath(token, tracing));
   let head = tokens[0]!;
   if (subcommands.has(executable) && /^[A-Za-z][A-Za-z0-9_-]*$/.test(tokens[1]?.text ?? "")) head = concat(head, literal(" ", tracing), tokens[1]!);
@@ -294,7 +303,7 @@ function stageText(stage: Stage, tracing: boolean): { head: CommandPreviewPlan; 
   return { head: concat(prefix, head), full: concat(prefix, ...tokens.flatMap((token, i) => i ? [literal(" ", tracing), token] : [token])) };
 }
 
-function preview(command: string, width: number, shell: "bash" | "powershell", mode: CommandPreviewMode, tracing: boolean): CommandPreviewPlan {
+function preview(command: string, width: number, shell: "bash" | "powershell" | "zsh", mode: CommandPreviewMode, tracing: boolean): CommandPreviewPlan {
   const newline = command.indexOf("\n");
   const first = newline < 0 ? command : command.slice(0, newline).replace(/\r$/, "");
   let firstLine = plain(first.replace(/[\r\t]/g, " "));
@@ -311,11 +320,12 @@ function preview(command: string, width: number, shell: "bash" | "powershell", m
     return plain(width <= visibleWidth(marker) ? clip(plain(marker.trimStart()), width).text
       : clip(firstLine, width - visibleWidth(marker)).text + marker);
   };
-  if (mode === "raw" || shell !== "bash") return fallback();
+  if (mode === "raw" || (shell !== "bash" && shell !== "zsh")) return fallback();
   if (widthOf(firstLine) <= width && newline < 0) return clip(firstLine, width);
-  const parsed = stages(command, tracing);
+  const opaqueHeads = shell === "zsh" ? zshOpaqueHeads : reserved;
+  const parsed = stages(command, tracing, opaqueHeads);
   if (!parsed) return fallback();
-  const descriptions = parsed.map(stage => stageText(stage, tracing));
+  const descriptions = parsed.map(stage => stageText(stage, tracing, opaqueHeads));
   if (descriptions.some(value => !value)) return fallback();
   const parts = descriptions.map((value, i) => {
     const before = parsed[i]!.before;
@@ -362,11 +372,11 @@ function preview(command: string, width: number, shell: "bash" | "powershell", m
 }
 
 /** Compact prioritizes command heads; Raw retains the width-bounded first-line fallback. */
-export function commandPreview(command: string, width: number, shell: "bash" | "powershell" = "bash", mode: CommandPreviewMode = "compact"): string {
+export function commandPreview(command: string, width: number, shell: "bash" | "powershell" | "zsh" = "bash", mode: CommandPreviewMode = "compact"): string {
   return preview(command, width, shell, mode, false).text;
 }
 
-/** Optional source spans share the plain preview's scanner and allocation rules. */
+/** Optional Bash source spans share the plain preview's scanner and allocation rules. */
 export function commandPreviewPlan(command: string, width: number): CommandPreviewPlan {
   const tracing = command.length <= COMMAND_SOURCE_LIMIT && !/[\x00-\x08\x0b-\x1f\x7f-\x9f]/.test(command);
   return preview(command, width, "bash", "compact", tracing);

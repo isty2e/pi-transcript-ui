@@ -1,7 +1,8 @@
 import { expect, it } from "vitest";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { shellSessionSummary } from "../src/shell-session-summary.js";
-import { joinLine, shellSessionLine, targetText } from "../src/display.js";
+import { displayFor, joinLine, runningLine, shellSessionLine, targetText } from "../src/display.js";
+import { styleLine } from "../src/wiring.js";
 
 const schema = (name: string, extras: Record<string, unknown> = {}) => ({ type: "object",
   properties: { [name === "exec_command" ? "cmd" : "session_id"]: { type: name === "exec_command" ? "string" : "number" },
@@ -23,6 +24,91 @@ it("projects common requests without assuming shell language or process lifetime
   expect(summarize("exec_command", { cmd: "npm test", shell: "/bin/fish" })).toEqual({ action: "Run", command: "npm test" });
   for (const chars of [undefined, ""]) expect(summarize("write_stdin", { session_id: 1, chars })).toEqual({ action: "Check output" });
   for (const chars of ["\n", " ", "\u0003", "help\n", "\\x03"]) expect(summarize("write_stdin", { session_id: 1, chars })).toEqual({ action: "Send input" });
+});
+
+const chain = "cd /workspace/a/long/project/directory && npm run build --configuration lengthy-development-profile || printf '%s' fallback | head -n 20";
+const rawExecLine = (command: string, width = 120) => runningLine("exec_command",
+  { action: "Run", target: { kind: "opaque-command", command } }, undefined, { width });
+
+it.each(["bash", "/bin/bash", "/usr/local/bin/bash", "/opt/homebrew/bin/bash", "/nix/store/custom-package/bin/bash",
+  "/Volumes/Custom Tools/bin/bash", "bash.exe", "C:\\Program Files\\Git\\bin\\bash.exe"])(
+  "shares the Bash Compact behavior for an explicit executable %j", shell => {
+    const args = Object.freeze({ cmd: chain, shell });
+    const summary = summarize("exec_command", args, undefined, schema("exec_command", { shell: { type: "string" } }))!;
+    const layout = { width: 72 };
+    const actual = shellSessionLine(summary, false, "running", { layout });
+    const expected = runningLine("bash", displayFor("bash", { command: chain }), undefined, layout);
+    expect(actual).toEqual(expected);
+    expect(joinLine(actual)).toMatch(/&&.*\|\|.*\|/);
+    expect(args).toEqual({ cmd: chain, shell });
+  },
+);
+
+it("honors Raw rather than forcing Compact for a known Bash executable", () => {
+  const summary = summarize("exec_command", { cmd: chain, shell: "/usr/local/bin/bash" }, undefined,
+    schema("exec_command", { shell: { type: "string" } }))!;
+  const limits = { commandPreview: "compact" as "compact" | "raw" };
+  const layout = { width: 72, limits };
+  expect(shellSessionLine(summary, false, "running", { layout })).toEqual(
+    runningLine("bash", displayFor("bash", { command: chain }), undefined, layout));
+  limits.commandPreview = "raw";
+  expect(shellSessionLine(summary, false, "running", { layout })).toEqual(
+    runningLine("bash", displayFor("bash", { command: chain }), undefined, layout));
+});
+
+it.each(["zsh", "/bin/zsh", "/usr/local/bin/zsh", "/opt/homebrew/bin/zsh", "/nix/store/custom/bin/zsh",
+  "/Volumes/Custom Tools/bin/zsh", "zsh.exe", "C:\\Program Files\\zsh\\zsh.exe"])(
+  "uses plain zsh Compact rather than Bash coloring for explicit executable %j", shell => {
+    const summary = summarize("exec_command", { cmd: chain, shell }, undefined, schema("exec_command", { shell: { type: "string" } }))!;
+    const layout = { width: 72 };
+    const parts = shellSessionLine(summary, false, "running", { layout });
+    expect(joinLine(parts)).toMatch(/&&.*\|\|.*\|/);
+    const color = () => { throw Error("Bash colorizer must not parse zsh"); };
+    const theme = { bold: (text: string) => text, fg: (_color: string, text: string) => text };
+    expect(styleLine(theme, parts, false, color)).toBe(joinLine(parts));
+    expect(shellSessionLine(summary, false, "running", { layout: { ...layout, limits: { commandPreview: "raw" } } }))
+      .toEqual(rawExecLine(chain, 72));
+  },
+);
+
+it.each([undefined, "", "/bin/fish", "sh", "pwsh", "cmd.exe", "/bin/mybash", "/bin/bash-wrapper",
+  "/bin/bash -lc", "/usr/bin/env bash", "/bin/bash/", "/bin/bash\n", "/bin/myzsh", "/bin/zsh -fc", "/bin/zsh/", "/bin/zsh\n", 12])(
+  "keeps unavailable or unsupported shell evidence opaque: %j", shell => {
+    const summary = summarize("exec_command", { cmd: chain, shell }, undefined,
+      schema("exec_command", { shell: { type: "string", default: "/bin/bash" } }))!;
+    for (const width of [24, 72]) {
+      expect(shellSessionLine(summary, false, "running", { layout: { width } })).toEqual(rawExecLine(chain, width));
+    }
+  },
+);
+
+it.each(["bash", "zsh"])("does not infer %s from an undeclared shell, schema default or command prefix", shell => {
+  for (const parameters of [schema("exec_command"), schema("exec_command", { shell: { type: "number" } })]) {
+    const summary = summarize("exec_command", { cmd: chain, shell: `/bin/${shell}` }, undefined, parameters)!;
+    expect(shellSessionLine(summary, false, "running")).toEqual(rawExecLine(chain));
+  }
+  const command = `${shell} -lc '${chain}'`;
+  const summary = summarize("exec_command", { cmd: command }, undefined,
+    schema("exec_command", { shell: { type: "string", default: `/bin/${shell}` } }))!;
+  expect(shellSessionLine(summary, false, "running")).toEqual(rawExecLine(command));
+});
+
+it("does not promote inherited or accessor shell evidence to a Bash command", () => {
+  const parameters = schema("exec_command", { shell: { type: "string" } });
+  const inherited = { cmd: chain };
+  Object.setPrototypeOf(inherited, { shell: "/bin/bash" });
+  let reads = 0;
+  const accessor = Object.defineProperty({ cmd: chain }, "shell", { get() { reads++; return "/bin/bash"; } });
+  for (const args of [inherited, accessor]) {
+    const summary = summarize("exec_command", args, undefined, parameters)!;
+    expect(shellSessionLine(summary, false, "running")).toEqual(rawExecLine(chain));
+  }
+  expect(reads).toBe(0);
+
+  const undeclared = schema("exec_command");
+  Object.setPrototypeOf(undeclared.properties, { shell: { type: "string" } });
+  const summary = summarize("exec_command", { cmd: chain, shell: "/bin/bash" }, undefined, undeclared)!;
+  expect(shellSessionLine(summary, false, "running")).toEqual(rawExecLine(chain));
 });
 
 it.each(["exec_command", "write_stdin"])("requires every declared input before projecting %s", name => {
@@ -63,13 +149,13 @@ it("retains defined empty, zero and false required inputs", () => {
 it("marks omitted command lines before the whole-script exit code", () => {
   const summary = summarize("exec_command", { cmd: "cd repo\nrm -rf build\nnpm test" },
     { output: "", wall_time_seconds: 1, exit_code: 0 })!;
-  expect(joinLine(shellSessionLine(summary, false, false))).toBe("▸ Run cd repo […] (exit 0)");
+  expect(joinLine(shellSessionLine(summary, false, "settled"))).toBe("▸ Ran cd repo […] (exit 0)");
 });
 
 it.each(["\n", "\n\n  \n", "\r\n", "\r\n \t\r\n"])("keeps trailing whitespace out of the omission claim and exit label: %j", suffix => {
   const args = { cmd: "npm test" + suffix };
   const summary = summarize("exec_command", args, { output: "", wall_time_seconds: 1, exit_code: 0 })!;
-  expect(joinLine(shellSessionLine(summary, false, false))).toBe("▸ Run npm test (exit 0)");
+  expect(joinLine(shellSessionLine(summary, false, "settled"))).toBe("▸ Ran npm test (exit 0)");
   expect(args.cmd).toBe("npm test" + suffix);
 });
 
@@ -133,11 +219,11 @@ it("refuses unknown names, schema meanings and malformed requests", () => {
 it("keeps opaque commands raw, uncolored, bounded and independent from exit/error status", () => {
   const command = "echo 'quoted' && fish-specific $argv[1]\nsecond command";
   const summary = summarize("exec_command", { cmd: command }, { output: "x", wall_time_seconds: 1, exit_code: 7 })!;
-  const parts = shellSessionLine(summary, false, false, { intent: "Check tests", layout: { width: 80 } });
-  expect(joinLine(parts)).toContain("Run echo 'quoted' && fish-specific $argv[1]");
+  const parts = shellSessionLine(summary, false, "settled", { intent: "Check tests", layout: { width: 80 } });
+  expect(joinLine(parts)).toContain("Ran echo 'quoted' && fish-specific $argv[1]");
   expect(joinLine(parts)).toContain("(exit 7)");
   expect(parts.command).toBeUndefined();
   expect(joinLine(parts)).not.toContain("— error");
-  expect(joinLine(shellSessionLine(summary, true, false))).toContain("— error");
+  expect(joinLine(shellSessionLine(summary, true, "settled"))).toContain("— error");
   for (const width of [0, 1, 5, 24]) expect(visibleWidth(targetText({ kind: "opaque-command", command }, {}, width))).toBeLessThanOrEqual(width);
 });

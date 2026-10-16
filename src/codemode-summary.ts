@@ -1,7 +1,8 @@
 import { isRecord } from "./intent.js";
+import type { ToolPhase } from "./tool-phase.js";
 
 export interface CodemodeSummary {
-  readonly isPartial: boolean;
+  readonly phase: ToolPhase;
   readonly calls: Readonly<{
     total: number;
     running: number;
@@ -37,15 +38,15 @@ function nestedCalls(value: unknown): CodemodeSummary["calls"] {
 }
 
 /** Project Pi's recorded codemode facts without interpreting the script or result text. */
-export function codemodeSummary({ toolName, args, result, isPartial }: {
+export function codemodeSummary({ toolName, args, result, phase }: {
   readonly toolName: string;
   readonly args: unknown;
   readonly result: unknown;
-  readonly isPartial: boolean;
+  readonly phase: ToolPhase;
 }): CodemodeSummary | undefined {
   try {
     if (toolName !== "codemode" || !isRecord(args) || typeof args.code !== "string") return undefined;
     const details = isRecord(result) && isRecord(result.details) ? result.details : undefined;
-    return { isPartial, calls: nestedCalls(details?.calls) };
+    return { phase, calls: nestedCalls(details?.calls) };
   } catch { return undefined; }
 }

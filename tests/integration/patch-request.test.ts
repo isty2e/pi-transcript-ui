@@ -41,7 +41,7 @@ it.each(["dark", "light"])("preserves native bodies, status and object identitie
     chat.addChild(component);
     const dispose = attach(root);
     try {
-      expect(text(chat)).toContain("Patch src/a.ts (requested +1 -1) — Adjust configuration");
+      expect(text(chat)).toContain("Patched src/a.ts (requested +1 -1) — Adjust configuration");
       for (const width of widths) {
         const rows = component.render(width);
         expect(rows.slice(2)).toEqual(nativeRows.get(width));
@@ -69,11 +69,11 @@ it("keeps requested deltas distinct from arbitrary receipt fields and call-level
     component.updateResult(result, true);
     expect(text(chat)).toContain("(requested +1 -1)…");
     component.updateResult(result);
-    expect(text(chat)).toContain("Patch src/a.ts (requested +1 -1)");
+    expect(text(chat)).toContain("Patched src/a.ts (requested +1 -1)");
     expect(text(chat)).not.toContain("+3");
     expect(text(chat)).not.toContain("— error");
     component.updateResult({ ...result, isError: true });
-    expect(text(chat)).toContain("Patch src/a.ts — error (requested +1 -1)");
+    expect(text(chat)).toContain("Patched src/a.ts — error (requested +1 -1)");
     expect(text(chat)).not.toContain("(3 lines)");
   } finally { dispose(); }
 });
@@ -86,7 +86,7 @@ it("groups native calls rather than targets, with request-only aggregates and un
   chat.addChild(a); chat.addChild(b);
   const dispose = attach(root);
   try {
-    expect(text(chat).split("\n")[1]).toBe("▾ Editing 2 calls (requested 3 targets: +3 -1)…");
+    expect(text(chat).split("\n")[1]).toBe("▾ Edit 2 calls (requested 3 targets: +3 -1)…");
     a.updateResult(receipt()); b.updateResult(receipt());
     expect(text(chat)).toBe("\n▸ Edited 2 calls (requested 3 targets: +3 -1)");
     b.updateResult(receipt(true));
@@ -95,7 +95,7 @@ it("groups native calls rather than targets, with request-only aggregates and un
     expect(text(chat)).toBe("\n▸ Edited 2 calls — 1 failed (requested 3 targets)");
     dispose.targets()[0]!.setExpanded(true);
     expect(dispose.targets()).toHaveLength(3);
-    expect(text(chat)).toContain("Patch old — error (requested)");
+    expect(text(chat)).toContain("Patched old — error (requested)");
   } finally { dispose(); }
 });
 
@@ -111,7 +111,7 @@ it("never adds request counts to applied edit totals in mixed mutation groups", 
   try {
     expect(text(chat)).toBe("\n▸ Edited 2 calls (partial 1/2: +1 -1)");
     dispose.targets()[0]!.setExpanded(true);
-    expect(text(chat)).toContain("Patch b (requested +2 -0)");
+    expect(text(chat)).toContain("Patched b (requested +2 -0)");
   } finally { dispose(); }
 });
 
@@ -139,7 +139,7 @@ it("regroups on streamed argument completion, revocation and same-object updates
     chat.clear();
     expect(dispose.targets()).toHaveLength(0);
     chat.addChild(b);
-    expect(text(chat)).toBe("\n▸ Patch src/a.ts (requested +1 -1)");
+    expect(text(chat)).toBe("\n▸ Patched src/a.ts (requested +1 -1)");
   } finally { dispose(); }
 });
 
@@ -152,9 +152,9 @@ it.each(["standalone", "mutation", "read"] as const)("preserves explicit %s grou
   try {
     if (rule === "standalone") {
       expect(dispose.targets()).toHaveLength(2);
-      expect(text(chat).match(/Patch src\/a.ts/g)).toHaveLength(2);
+      expect(text(chat).match(/Patched src\/a.ts/g)).toHaveLength(2);
     } else {
-      expect(text(chat)).toContain(`${rule === "read" ? "Exploration" : "Edited"} 2 calls (requested 2 targets: +2 -2)`);
+      expect(text(chat)).toContain(`${rule === "read" ? "Explored" : "Edited"} 2 calls (requested 2 targets: +2 -2)`);
     }
     expect(text(chat)).not.toContain("2 files");
     expect(text(chat)).not.toContain("(6 lines)");
@@ -170,11 +170,11 @@ it("renders structured single-file requests without confusing them with native e
   component.updateResult(receipt()); chat.addChild(component);
   const dispose = attach(root);
   try {
-    expect(text(chat)).toContain("Patch a.txt (requested +2 -0)");
+    expect(text(chat)).toContain("Patched a.txt (requested +2 -0)");
     component.updateArgs({ type: "delete_file", path: "a.txt" });
-    expect(text(chat)).toContain("Patch a.txt (requested)");
+    expect(text(chat)).toContain("Patched a.txt (requested)");
     component.updateArgs({ type: "update_file", path: "a.txt", diff: "@@\n-old\n+new" });
-    expect(text(chat)).toContain("Patch a.txt (requested +1 -1)");
+    expect(text(chat)).toContain("Patched a.txt (requested +1 -1)");
   } finally { dispose(); }
 });
 
@@ -241,7 +241,7 @@ it("preserves existing read/write schema boundaries when patch-like arguments co
     component.updateResult(receipt()); chat.addChild(component);
     const dispose = attach(root);
     expect(text(chat)).not.toContain("requested");
-    expect(text(chat)).toContain(native.name === "read" ? (hybrid ? "apply_patch (3 lines)" : "Read a") : "Write a");
+    expect(text(chat)).toContain(native.name === "read" ? (hybrid ? "apply_patch (3 lines)" : "Read a") : "Wrote a");
     dispose();
   }
 });

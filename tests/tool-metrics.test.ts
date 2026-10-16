@@ -26,7 +26,7 @@ it("retains simultaneous Write content size and patch evidence, even under a rea
   expect(metrics.read).toEqual({ kind: "not-applicable" });
   expect(metrics.written).toEqual({ kind: "known", value: 0 });
   expect(metrics.patch).toEqual({ kind: "known", value: { added: 1, removed: 1 } });
-  expect(joinLine(settledLine({ toolName: "read", display: displayFor("read", args, mutation), content: result.content, isError: false, metrics }))).toBe("▸ Write f (0 lines)");
+  expect(joinLine(settledLine({ toolName: "read", display: displayFor("read", args, mutation), content: result.content, isError: false, metrics }))).toBe("▸ Wrote f (0 lines)");
 });
 
 it.each(["partial", "failure", "missing"])("does not invent a Write count for %s evidence", state => {

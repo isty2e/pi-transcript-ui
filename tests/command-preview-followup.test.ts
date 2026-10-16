@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { stripTerminalSequences, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { commandPreview } from "../src/command-preview.js";
+import { commandPreview, commandPreviewPlan } from "../src/command-preview.js";
 
 const sample = `cd /Users/example/Desktop/git/example-project && git diff --check && test -z "$(git diff --cached --name-only)" && kata --project example-project close demo-1 --message '${"검증 결과 기록 ".repeat(30)}' --agent; if tmux -L example-preview has-session -t verify 2>/dev/null; then echo 'verification still active'; else echo 'verification process exited'; fi`;
 
@@ -105,5 +105,58 @@ it("retains raw fallback for unsupported initial single-line syntax and substitu
   const deep = 'echo ' + '$(echo '.repeat(9) + 'x' + ')'.repeat(9) + ' && git status';
   for (const command of ['if true; then echo x; fi', deep]) {
     expect(commandPreview(command, 12)).toBe(truncateToWidth(command.split("\n")[0]!, 12, "…"));
+  }
+});
+
+it("does not turn a zsh append-clobber target into a pipeline command", () => {
+  const source = "printf '%s' value >>| /workspace/long/path/output.log";
+  for (const shell of ["bash", "zsh"] as const) {
+    for (const width of [0, 1, 8, 24, 40]) {
+      expect(commandPreview(source, width, shell)).toBe(commandPreview(source, width, shell, "raw"));
+    }
+  }
+});
+
+it.each([">|", ">>|", "2>>|", ">>&", ">>>", ">>(", ">\\\n|", ">>\\\n|", ">\\\n>|", ">\\\n>\\\n|"])(
+  "stops at an unsupported redirection sequence rather than exposing its target: %j", operator => {
+    const source = `pwd\nprintf '%s' value ${operator} REDIRECTION_TARGET\nAFTER`;
+    for (const shell of ["bash", "zsh"] as const) {
+      expect(commandPreview(source, 120, shell)).toBe("pwd ↵ printf […]");
+      for (const width of [0, 1, 8, 24, 60, 120]) {
+        const preview = commandPreview(source, width, shell);
+        expect(preview).not.toMatch(/REDIRECTION_TARGET|AFTER|\[\+\d+\]/);
+        expect(visibleWidth(preview)).toBeLessThanOrEqual(width);
+        if (shell === "bash") expect(commandPreviewPlan(source, width).text).toBe(stripTerminalSequences(preview));
+      }
+    }
+  },
+);
+
+it.each([
+  ["cat < input >> output | cat", "cat < input >> output | cat"],
+  ["printf x > output | cat", "printf x > output | cat"],
+  ["printf x >> 'quoted|file' | cat", "printf x >> 'quoted|file' | cat"],
+  ["printf x >> \\| | cat", "printf x >> \\| | cat"],
+  ["printf x >>\\\n output | cat", "printf x >> output | cat"],
+  ["printf x >\\\n> output | cat", "printf x >> output | cat"],
+  ["printf x >\\\n>\\\n output | cat", "printf x >> output | cat"],
+] as const)("retains ordinary redirections and actual following pipelines: %s", (first, expected) => {
+  const source = `${first}\ngit status`;
+  for (const shell of ["bash", "zsh"] as const) {
+    expect(commandPreview(source, 120, shell)).toBe(`${expected} ↵ git status`);
+  }
+  const plan = commandPreviewPlan(source, 120);
+  expect(plan.text).toBe(`${expected} ↵ git status`);
+  for (const span of plan.spans!) {
+    if (typeof span.origin === "number") {
+      expect(plan.text.slice(span.start, span.end)).toBe(source.slice(span.origin, span.origin + span.end - span.start));
+    }
+  }
+});
+
+it("rewinds pending heredocs when an unsupported append redirection is refused", () => {
+  const source = "pwd\ncat <<EOF; printf x >>| REDIRECTION_TARGET\nBODY | INNER\nEOF\nAFTER";
+  for (const shell of ["bash", "zsh"] as const) {
+    expect(commandPreview(source, 120, shell)).toBe("pwd ↵ cat […]");
   }
 });

@@ -7,14 +7,16 @@ A collapsed Read group, an expanded Edit group, [shell-session calls](docs/usage
 ```text
 ▸ Read 2 files (4 lines)
 ▾ Edited 2 calls (+3 -2)
-  ▸ Edit src/config.ts (+2 -1) — Update configuration
-  ▸ Edit src/defaults.ts (+1 -1) — Adjust defaults
-▸ Run npm test (exit 0) — Verify changes
-▸ Check output (exit 0)
-▸ Code read ×2, bash (3 nested calls) (1.2s)
+  ▸ Edited src/config.ts (+2 -1) — Update configuration
+  ▸ Edited src/defaults.ts (+1 -1) — Adjust defaults
+▸ Ran npm test (exit 0) — Verify changes
+▸ Checked output (exit 0)
+▸ Ran code read ×2, bash (3 nested calls) (1.2s)
 ```
 
 Expand an individual call to see its original output. Read groups count files; mutation groups count calls, not unique files. Counts are shown only when usable evidence is available.
+
+Action labels follow the call's phase, such as `Run` → `Running` → `Ran`. Completed calls use the past tense even on failure; existing error colors and markers show the outcome. See [labels and status](docs/usage.md#counts-and-status).
 
 Individual summaries show recorded tool duration by default when available. Turn it off under **Display → Tool duration**; the same setting applies to codemode and other tools. See [duration details](docs/usage.md#tool-duration).
 
