@@ -41,16 +41,16 @@ it("does not invent time for missing results and never reads a partial or throwi
 it.each([true, false])("uses one duration policy across row families when toolDuration is %s", toolDuration => {
   const context = { durationMs: 125300, intent: "Verify output", layout: { limits: { toolDuration } } };
   const code = codemodeSummary({ toolName: "codemode", args: { code: "return 1" },
-    result: { details: { calls: [{ name: "read", status: "ok" }] } }, isPartial: false })!;
+    result: { details: { calls: [{ name: "read", status: "ok" }] } }, phase: "settled" })!;
   const parts = [
     ...["read", "write", "edit", "bash", "powershell", "custom"].map(toolName => settledLine({ toolName,
       display: displayFor(toolName, { path: "f.txt", command: "npm test" }), content, isError: false,
       metrics: NO_SUMMARY_METRICS, ...context })),
-    shellSessionLine({ action: "Run", command: "npm test", exitCode: 0 }, false, false, context),
-    shellSessionLine({ action: "Check output" }, true, false, context),
-    shellSessionLine({ action: "Send input" }, false, false, context),
+    shellSessionLine({ action: "Run", command: "npm test", exitCode: 0 }, false, "settled", context),
+    shellSessionLine({ action: "Check output" }, true, "settled", context),
+    shellSessionLine({ action: "Send input" }, false, "settled", context),
     codemodeLine({ summary: code, isError: false, ...context }),
-    codemodeLine({ summary: { isPartial: false, calls: undefined }, isError: true, ...context }),
+    codemodeLine({ summary: { phase: "settled", calls: undefined }, isError: true, ...context }),
   ];
 
   for (const row of parts) {
@@ -67,9 +67,9 @@ it.each([true, false])("uses one duration policy across row families when toolDu
 
 it("does not show a final time on partial shell or codemode rows even if a caller supplies one", () => {
   const context = { durationMs: 1234 };
-  const code = { isPartial: true, calls: undefined };
-  expect(joinLine(codemodeLine({ summary: code, isError: false, ...context }))).toBe("▸ Code…");
-  expect(joinLine(shellSessionLine({ action: "Check output" }, false, true, context))).toBe("▸ Check output…");
+  const code = { phase: "running" as const, calls: undefined };
+  expect(joinLine(codemodeLine({ summary: code, isError: false, ...context }))).toBe("▸ Running code…");
+  expect(joinLine(shellSessionLine({ action: "Check output" }, false, "running", context))).toBe("▸ Checking output…");
 });
 
 it("keeps mutation, purpose and error styling aligned after the common time metric", () => {

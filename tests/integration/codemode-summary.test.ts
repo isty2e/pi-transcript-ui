@@ -34,23 +34,23 @@ it("uses only observed nested calls and final parent time, not source prediction
   try {
     expect(text(chat)).toBe("\n▸ Code…");
     component.updateResult(result([]), true);
-    expect(text(chat)).toBe("\n▸ Code (0 nested calls so far)…");
+    expect(text(chat)).toBe("\n▸ Running code (0 nested calls so far)…");
 
     const receipt = result([call("read", "running"), call("read")]);
     component.updateResult(receipt, true);
-    expect(text(chat)).toBe("\n▸ Code read ×2 (2 nested calls so far; 1 running)…");
+    expect(text(chat)).toBe("\n▸ Running code read ×2 (2 nested calls so far; 1 running)…");
     expect(text(chat)).not.toContain("1.2s");
     receipt.details.calls[0]!.status = "error";
     component.updateResult(receipt, true);
     expect(text(chat)).toContain("2 nested calls so far; 1 error");
     component.updateResult(receipt);
-    expect(text(chat)).toBe("\n▸ Code read ×2 (2 nested calls; 1 error) (1.2s)");
+    expect(text(chat)).toBe("\n▸ Ran code read ×2 (2 nested calls; 1 error) (1.2s)");
     expect(component.result?.isError).toBe(false);
     expect(text(chat)).not.toContain("— error");
     expect(text(chat)).not.toContain("99.0s");
 
     component.updateResult({ ...receipt, isError: true });
-    expect(text(chat)).toBe("\n▸ Code read ×2 — error (2 nested calls; 1 error) (1.2s)");
+    expect(text(chat)).toBe("\n▸ Ran code read ×2 — error (2 nested calls; 1 error) (1.2s)");
   } finally { dispose(); }
 });
 
@@ -62,7 +62,7 @@ it.each([undefined, null, {}, [call("read"), { name: "bash", status: "new-status
     component.updateResult(result(calls));
     chat.addChild(component);
     const dispose = attachTranscriptPresentation(root, { getTheme: () => theme, requestRender: vi.fn() });
-    try { expect(text(chat)).toBe("\n▸ Code (1.2s)"); }
+    try { expect(text(chat)).toBe("\n▸ Ran code (1.2s)"); }
     finally { dispose(); }
   },
 );
@@ -75,9 +75,9 @@ it("preserves empty, cancelled and running records without converting nested sta
   const dispose = attachTranscriptPresentation(root, { getTheme: () => theme, requestRender: vi.fn() });
   try {
     component.updateResult(result([], false, 0));
-    expect(text(chat)).toBe("\n▸ Code (0 nested calls) (0.0s)");
+    expect(text(chat)).toBe("\n▸ Ran code (0 nested calls) (0.0s)");
     component.updateResult(result([call("models.classify", "cancelled"), call("bash", "running")], false, NaN));
-    expect(text(chat)).toBe("\n▸ Code models.classify, bash (2 nested calls; 1 running; 1 cancelled)");
+    expect(text(chat)).toBe("\n▸ Ran code models.classify, bash (2 nested calls; 1 running; 1 cancelled)");
   } finally { dispose(); }
 });
 
@@ -95,7 +95,7 @@ it.each(["dark", "light"])("keeps the native body, identities, optional intent a
   chat.addChild(component);
   const dispose = attachTranscriptPresentation(root, { getTheme: () => theme, requestRender: vi.fn() });
   try {
-    expect(text(chat)).toContain("Code read ×2, bash, models.classify (4 nested calls) (1.2s) — 실제 호출 확인");
+    expect(text(chat)).toContain("Ran code read ×2, bash, models.classify (4 nested calls) (1.2s) — 실제 호출 확인");
     expect(text(chat)).not.toContain("not_observed");
     for (const width of widths) {
       const rows = component.render(width);
@@ -126,11 +126,11 @@ it("counts native parents under explicit grouping without adding nested calls or
 
   const dispose = attachTranscriptPresentation(root, { ...options, rules: { codemode: "explore" } });
   try {
-    expect(text(chat)).toBe("\n▸ Exploration 2 calls");
+    expect(text(chat)).toBe("\n▸ Explored 2 calls");
     const navigation = new ToolNavigation(dispose.targets);
     navigation.act("right");
     expect(dispose.targets()).toHaveLength(3);
-    expect(text(chat).match(/Code read ×2 \(2 nested calls/g)).toHaveLength(2);
+    expect(text(chat).match(/Ran code read ×2 \(2 nested calls/g)).toHaveLength(2);
     expect(text(chat)).not.toContain("files");
   } finally { dispose(); }
 });

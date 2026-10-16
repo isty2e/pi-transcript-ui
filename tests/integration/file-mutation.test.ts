@@ -35,8 +35,8 @@ it.each(["dark", "light"])("sums renamed native edit/write patches, preserves bo
   let dispose = attach(root);
   try {
     expect(text(chat)).toContain("Edited 2 calls (+2 -1)");
-    expect(text(chat)).toContain("Edit same.txt (+1 -1)");
-    expect(text(chat)).toContain("Write same.txt (2 lines)");
+    expect(text(chat)).toContain("Edited same.txt (+1 -1)");
+    expect(text(chat)).toContain("Wrote same.txt (2 lines)");
     expect(chat.render(120)[1]).toContain(theme.fg("toolDiffAdded", "+2"));
     expect(chat.render(120)[1]).toContain(theme.fg("toolDiffRemoved", "-1"));
     for (const width of widths) for (const [index, tool] of [edit, write].entries()) {
@@ -69,7 +69,7 @@ it("counts native written content, while repeated native edits sum deltas rather
     const writeResult = await writeDef.execute("w", writeArgs, undefined, undefined, {} as never);
     expect(writeResult.details).toBeUndefined();
     const write = component(writeDef, "w", writeArgs); write.updateResult({ ...writeResult, isError: false }); chat.addChild(write);
-    expect(text(chat)).toContain("Write");
+    expect(text(chat)).toContain("Wrote");
     expect(text(chat)).toContain("(1 line)");
     expect(text(chat)).not.toContain("(+");
     const editDef = { ...createEditToolDefinition(dir), name: "renamed_editor" };
@@ -92,7 +92,7 @@ it("recomputes partial coverage for running/errors/missing patches, in-place upd
   a.updateResult(result()); chat.addChild(a); chat.addChild(b); chat.addChild(c);
   const dispose = attach(root);
   try {
-    expect(text(chat)).toContain("Editing 3 calls (partial 1/3: +1 -1)…");
+    expect(text(chat)).toContain("Edit 3 calls (partial 1/3: +1 -1)…");
     b.updateResult(result(), true);
     c.updateResult({ ...result(), isError: true });
     expect(text(chat)).toContain("partial 1/3");
@@ -147,10 +147,10 @@ it("reads the original schema only on attachment while arguments and results sta
   const tool = component(definition, "a", { path: "first.txt", content: "old" });
   tool.updateResult(result()); chat.addChild(tool);
   let dispose = attach(root);
-  for (let i = 0; i < 5; i++) expect(text(chat)).toContain("Write first.txt (1 line)");
+  for (let i = 0; i < 5; i++) expect(text(chat)).toContain("Wrote first.txt (1 line)");
   expect(readSchema).toHaveBeenCalledTimes(1);
   tool.updateArgs({ path: "second.txt", content: "new" });
-  expect(text(chat)).toContain("Write second.txt (1 line)");
+  expect(text(chat)).toContain("Wrote second.txt (1 line)");
   expect(readSchema).toHaveBeenCalledTimes(1);
   dispose(); dispose = attach(root);
   expect(readSchema).toHaveBeenCalledTimes(2);
@@ -173,7 +173,7 @@ it("keeps read-shaped/definitionless edit tools generic even with patch metadata
     expect(text(chat)).not.toContain("files");
     expect(text(chat)).not.toContain("(+");
     dispose.targets()[0]!.setExpanded(true);
-    expect(text(chat)).not.toContain("Edit same.txt");
+    expect(text(chat)).not.toContain("Edited same.txt");
     dispose();
   }
 });
@@ -188,13 +188,13 @@ it.each(["read", "grep"])("does not mislabel file-changing schemas under saved %
   chat.addChild(write); chat.addChild(other);
   let dispose = attachTranscriptPresentation(root, { getTheme: () => theme, requestRender: vi.fn(), rules: groupingRules(defaultSettings()) });
   try {
-    expect(text(chat)).toContain("Exploration 2 calls (partial 1/2: +1 -1)");
+    expect(text(chat)).toContain("Explored 2 calls (partial 1/2: +1 -1)");
     chat.removeChild(other);
     const second = component(definition, "second", { path: "same.txt", content: "next\n" });
     second.updateResult(result()); chat.addChild(second);
     dispose();
     dispose = attachTranscriptPresentation(root, { getTheme: () => theme, requestRender: vi.fn(), rules: groupingRules(defaultSettings()) });
-    expect(text(chat)).toContain("Exploration 2 calls (+2 -2)");
+    expect(text(chat)).toContain("Explored 2 calls (+2 -2)");
   } finally { dispose(); }
 });
 
@@ -215,10 +215,10 @@ it("honors saved custom family and exclusion choices across detach/reload with h
   settings.grouping.standalone = ["external"];
   dispose = attachTranscriptPresentation(root, { getTheme: () => theme, requestRender: vi.fn(), rules: groupingRules(settings) });
   expect(dispose.targets().filter((t) => t.kind === "group")).toHaveLength(0);
-  expect(text(chat)).toContain("Write same.txt (1 line)");
+  expect(text(chat)).toContain("Wrote same.txt (1 line)");
   dispose();
   settings.grouping.standalone = []; settings.grouping.exploration.push("external");
   dispose = attachTranscriptPresentation(root, { getTheme: () => theme, requestRender: vi.fn(), rules: groupingRules(settings) });
-  expect(text(chat)).toContain("Exploration 2 calls (+2 -2)");
+  expect(text(chat)).toContain("Explored 2 calls (+2 -2)");
   dispose();
 });

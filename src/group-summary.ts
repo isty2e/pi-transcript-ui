@@ -2,12 +2,13 @@ import type { ToolClassification } from "./classify.js";
 import { changeText, failureText, requestedPatchText, type LineParts } from "./display.js";
 import { readCountText } from "./read-body.js";
 import type { FileCapabilities, SummaryMetrics } from "./tool-metrics.js";
+import type { ToolPhase } from "./tool-phase.js";
 
 export interface GroupMemberSummary {
   readonly toolName: string;
   readonly classification: ToolClassification;
   readonly capabilities: FileCapabilities;
-  readonly settled: boolean;
+  readonly phase: ToolPhase;
   readonly isError: boolean;
   readonly readPath: string | undefined;
   readonly metrics: SummaryMetrics;
@@ -26,12 +27,12 @@ interface GroupSummaryInput extends GroupSelectionInput {
 }
 
 const verbs = {
-  read: ["Reading", "Read", "calls"],
-  search: ["Searching", "Searched", "patterns"],
-  list: ["Listing", "Listed", "paths"],
-  mutate: ["Editing", "Edited", "calls"],
-  explore: ["Exploration", "Exploration", "calls"],
-  change: ["Mutation", "Mutation", "calls"],
+  read: { pending: "Read", running: "Reading", settled: "Read", unit: "calls" },
+  search: { pending: "Search", running: "Searching", settled: "Searched", unit: "patterns" },
+  list: { pending: "List", running: "Listing", settled: "Listed", unit: "paths" },
+  mutate: { pending: "Edit", running: "Editing", settled: "Edited", unit: "calls" },
+  explore: { pending: "Exploration", running: "Exploring", settled: "Explored", unit: "calls" },
+  change: { pending: "Mutation", running: "Mutation", settled: "Mutation", unit: "calls" },
 } as const;
 
 function groupOperation({ classification, members }: GroupSelectionInput) {
@@ -49,12 +50,14 @@ function groupOperation({ classification, members }: GroupSelectionInput) {
 
 function selectSummary(input: GroupSelectionInput) {
   const { classification, members } = input;
-  const done = members.every(member => member.settled);
+  const phase: ToolPhase = members.every(member => member.phase === "settled") ? "settled"
+    : members.some(member => member.phase === "running") ? "running" : "pending";
+  const done = phase === "settled";
   const operation = groupOperation(input);
   const readGroup = operation === "read" || members.some(member =>
     member.capabilities.read || (!member.capabilities.mutation && !member.capabilities.patch && member.classification.operation === "read"));
 
-  let verb: readonly [string, string, string];
+  let verb: Readonly<Record<ToolPhase, string> & { unit: string }>;
   if (readGroup && classification.family === "exploration") {
     verb = operation === "read" || members.every(member => member.capabilities.read) ? verbs.read : verbs.explore;
   } else {
@@ -63,7 +66,7 @@ function selectSummary(input: GroupSelectionInput) {
 
   const countOutput = !readGroup && classification.family !== "mutation" && done &&
     !members.some(member => member.shellSession || member.toolName === "bash" || member.toolName === "codemode" || member.capabilities.mutation || member.capabilities.patch || member.metrics.patch.kind === "known");
-  return { done, verb, readGroup, countOutput };
+  return { done, phase, verb, readGroup, countOutput };
 }
 
 /** Request only the native identity/content facts that the selected summary will consume. */
@@ -75,12 +78,12 @@ export function groupSummaryRequirements(input: GroupSelectionInput): { readIden
 /** Aggregate current evidence only; native identity, membership and disclosure live in the adapter. */
 export function groupSummary(input: GroupSummaryInput): LineParts {
   const { members, expanded } = input;
-  const { done, verb, readGroup, countOutput } = selectSummary(input);
+  const { done, phase, verb, readGroup, countOutput } = selectSummary(input);
   const paths = verb === verbs.read ? members.map(member => member.readPath) : [];
   const files = paths.length > 0 && paths.every(path => path !== undefined) ? new Set(paths).size : undefined;
-  const quantity = files === undefined ? `${members.length} ${verb[2]}` : `${files} ${files === 1 ? "file" : "files"}`;
+  const quantity = files === undefined ? `${members.length} ${verb.unit}` : `${files} ${files === 1 ? "file" : "files"}`;
   const repeated = files !== undefined && files < members.length;
-  const failed = members.filter(member => member.settled && member.isError).length;
+  const failed = members.filter(member => member.phase === "settled" && member.isError).length;
   const failure = failed ? { count: failed, offset: ` ${quantity} — `.length } : undefined;
   const prefix = ` ${quantity}${failed ? ` — ${failureText(failed)}` : ""}`;
 
@@ -92,7 +95,7 @@ export function groupSummary(input: GroupSummaryInput): LineParts {
     }), { added: 0, removed: 0 }) : undefined;
     return {
       marker: expanded ? "▾" : "▸",
-      action: done ? verb[1] : verb[0],
+      action: verb[phase],
       rest: `${prefix} ${requestedPatchText(delta, targets)}${done ? "" : "…"}`,
       ...(failure ? { failure } : {}),
     };
@@ -127,7 +130,7 @@ export function groupSummary(input: GroupSummaryInput): LineParts {
 
   return {
     marker: expanded ? "▾" : "▸",
-    action: done ? verb[1] : verb[0],
+    action: verb[phase],
     rest: `${prefix}${metric ? ` ${metric}` : ""}${done ? "" : "…"}`,
     ...(change ? { change } : {}),
     ...(failure ? { failure } : {}),

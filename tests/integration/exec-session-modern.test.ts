@@ -31,7 +31,7 @@ it.each(["exec_command", "write_stdin"])("preserves the selected host %s compone
     }
     dispose.targets()[0]!.setExpanded(false);
     const compact = stripTerminalSequences(component.render(120).join("\n"));
-    expect(compact).toContain(name === "exec_command" ? "Run npm test (exit 7)" : "Check output (exit 7)");
+    expect(compact).toContain(name === "exec_command" ? "Ran npm test (exit 7)" : "Checked output (exit 7)");
     dispose.targets()[0]!.setExpanded(true);
     expect(component.render(80).slice(2)).toEqual(original.get(80));
     expect(component.args).toBe(args); expect(component.result).toBe(result); expect(component.toolDefinition).toBe(definition);

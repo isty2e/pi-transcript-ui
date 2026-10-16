@@ -4,7 +4,7 @@ import { codemodeSummary } from "../src/codemode-summary.js";
 import { codemodeLine, joinLine } from "../src/display.js";
 
 const summarize = (calls: unknown, isPartial = false) => codemodeSummary({
-  toolName: "codemode", args: { code: "" }, result: { details: { calls } }, isPartial,
+  toolName: "codemode", args: { code: "" }, result: { details: { calls } }, phase: isPartial ? "running" : "settled",
 })!;
 
 it("aggregates every observed status while bounding only the name preview", () => {
@@ -21,20 +21,20 @@ it.each([undefined, null, false, {}, [null], [{}], [{ name: "read", status: "don
   [{ name: "read", status: "ok" }, { name: "", status: "error" }]].map(calls => ({ calls })))("refuses an unusable whole calls list: $calls", ({ calls }) => {
   const summary = summarize(calls);
   expect(summary.calls).toBeUndefined();
-  expect(joinLine(codemodeLine({ summary, isError: false, durationMs: 42 }))).toBe("▸ Code (0.0s)");
+  expect(joinLine(codemodeLine({ summary, isError: false, durationMs: 42 }))).toBe("▸ Ran code (0.0s)");
 });
 
 it.each([null, undefined, {}, { code: null }, { code: 42 }, "tools.read({})"])("requires a native normalized code input: %j", args => {
-  expect(codemodeSummary({ toolName: "codemode", args, result: { details: { calls: [] } }, isPartial: false })).toBeUndefined();
+  expect(codemodeSummary({ toolName: "codemode", args, result: { details: { calls: [] } }, phase: "settled" })).toBeUndefined();
 });
 
 it("does not recognize another tool from a code field or matching result text", () => {
   expect(codemodeSummary({ toolName: "other", args: { code: "return 1" },
-    result: { details: { calls: [] } }, isPartial: false })).toBeUndefined();
+    result: { details: { calls: [] } }, phase: "settled" })).toBeUndefined();
   const summary = codemodeSummary({ toolName: "codemode", args: { code: "return tools.never_called({});" },
-    result: { content: [{ type: "text", text: "Script completed\nNo tool calls were made." }] }, isPartial: false })!;
+    result: { content: [{ type: "text", text: "Script completed\nNo tool calls were made." }] }, phase: "settled" })!;
   expect(summary.calls).toBeUndefined();
-  expect(joinLine(codemodeLine({ summary, isError: true }))).toBe("▸ Code — error");
+  expect(joinLine(codemodeLine({ summary, isError: true }))).toBe("▸ Ran code — error");
 });
 
 it("uses a bounded, plain, non-sequential name preview and retains partial/intent semantics", () => {
