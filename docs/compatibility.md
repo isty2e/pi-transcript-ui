@@ -9,11 +9,12 @@ pi-transcript-ui presents tool summaries in interactive Pi sessions. Compatibili
 | Pi host | Current test coverage |
 | --- | --- |
 | 1.3.0 | Primary suite: summaries, intent transport and persistence, native components, grouping, navigation and compositor fixtures |
-| 1.2.0 | Native codemode execution and shell-session components |
-| 0.99.1 | Structured system-prompt composition and overrides |
-| 0.85.1 | Legacy string-prompt guidance and disabled-intent behavior |
+| 1.1.0 | Shared UI/session/compositor fixtures, structured prompts and native codemode execution |
+| 0.85.1 | Shared UI/session/compositor fixtures and legacy string prompts; no native codemode |
 
-Each test configuration uses its selected host SDK and that host's resolved TUI dependency. These are component, session and compositor-fixture tests, not complete interactive terminal sessions or a blanket compatibility guarantee.
+Each host uses matching versions of its Pi runtime dependencies, including core, AI and TUI, plus codemode and MCP where present. Vitest isolates test execution and binds this extension to the selected SDK/TUI. Compatibility hosts share a focused set of native UI, grouping/navigation, compositor and session/prompt checks. Unit, parser, detailed formatting and publication-workflow tests run only on the primary host.
+
+Test admission follows release capabilities: structured prompt sections from 0.86.0, native codemode from 0.99.0, recorded tool duration from 1.1.0 and trigger-object prompt hooks from 1.2.0. Only the representative hosts listed above are exercised. These component, session and compositor-fixture tests do not establish complete interactive terminal sessions or compatibility with every release in those ranges.
 
 [Codemode coverage](usage.md#codemode) includes real sandbox execution, partial updates, saved results and native expanded-body rendering. The extension does not add codemode to older hosts.
 
@@ -59,7 +60,7 @@ On Pi hosts with structured system prompts, intent guidance uses the `pi_transcr
 
 On structured hosts, an explicit full-prompt override from another extension remains authoritative. This extension does not clear or rewrite that override to insert intent guidance, so the guidance may be absent. Composing sections into another extension's opaque override is unsupported; it requires cooperation from the override's owner.
 
-See [tested hosts](#tested-hosts) for structured and legacy prompt coverage. The older-host prompt checks do not establish compatibility of the entire UI with those versions.
+See [tested hosts](#tested-hosts) for shared UI checks and version-appropriate prompt coverage.
 
 ## Troubleshooting
 
