@@ -2,21 +2,25 @@
 
 Compact tool summaries for Pi, with optional purpose text and groups of adjacent calls. Tool execution and expanded output remain Pi's own.
 
-A collapsed Read group, an expanded Edit group and a standalone command:
+A collapsed Read group, an expanded Edit group, [shell-session calls](docs/usage.md#shell-sessions) and [native codemode](docs/usage.md#codemode):
 
 ```text
 ▸ Read 2 files (4 lines)
 ▾ Edited 2 calls (+3 -2)
   ▸ Edit src/config.ts (+2 -1) — Update configuration
   ▸ Edit src/defaults.ts (+1 -1) — Adjust defaults
-▸ Run npm test && git diff --check — Verify changes
+▸ Run npm test (exit 0) — Verify changes
+▸ Check output (exit 0)
+▸ Code read ×2, bash (3 nested calls; 1.2s)
 ```
 
 Expand an individual call to see its original output. Read groups count files; mutation groups count calls, not unique files. Counts are shown only when usable evidence is available.
 
 ## Install
 
-Requires [Pi](https://pi.dev) and Node.js 22.19 or newer. The extension has been checked with Pi 0.85.1; compatibility with other versions is not assured.
+Requires [Pi](https://pi.dev) and Node.js 22.19 or newer. Pi 0.85.1 is the checked runtime baseline; compatibility with other versions is not assured.
+
+Native codemode is not available on Pi 0.85.1. Codemode and shell-session summaries have [targeted coverage on Pi 1.2.0](docs/compatibility.md), not full terminal or compositor coverage.
 
 Install from npm (recommended):
 
@@ -55,7 +59,7 @@ The default summary width is 120 terminal columns, or the available viewport wid
 **Command preview** offers two modes:
 
 - **Compact** (default): shares space across command names and shortens supported Bash syntax.
-- **Raw**: shows the original first line within the same width limits, without compact transformations.
+- **Raw**: shows the original first line within the same width limits, without compact transformations. `[…]` marks omitted non-blank lines when space permits.
 
 Summaries are not executable replacement commands or proof that every displayed command ran. Expand the tool when you need exact arguments or output.
 
