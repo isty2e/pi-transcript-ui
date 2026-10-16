@@ -42,7 +42,9 @@ export function shellSessionSummary({ toolName, parameters, args, result, isPart
 
     const fields = parameters.properties;
     const requiredKeys = parameters.required;
+    if (requiredKeys.some((key: string) => !Object.hasOwn(args, key) || args[key] === undefined)) return undefined;
     const required = (key: string, type: string) => requiredKeys.includes(key) && isRecord(fields[key]) && fields[key].type === type;
+
     const exit = !isPartial ? receiptExitCode(result?.details, toolName) : undefined;
     const outcome = exit === undefined ? {} : { exitCode: exit };
 

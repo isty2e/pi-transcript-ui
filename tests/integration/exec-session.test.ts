@@ -219,3 +219,51 @@ it("counts native calls, not protocol lines, under explicit shell grouping", () 
     expect(dispose.targets()[1]!.expanded).toBe(true);
   } finally { dispose(); }
 });
+
+it.each(["exec_command", "write_stdin"] as const)("keeps incomplete required %s inputs on the generic row and group path", name => {
+  initTheme();
+  const { root, chat } = nativeTranscript();
+  const key = name === "exec_command" ? "workdir" : "chars";
+  const def = definition(name);
+  def.parameters = { type: "object", properties: name === "exec_command"
+    ? { cmd: { type: "string" }, workdir: { type: "string" } }
+    : { session_id: { type: "number" }, chars: { type: "string" } },
+    required: [name === "exec_command" ? "cmd" : "session_id", key] } as ToolDefinition["parameters"];
+  const args: Record<string, unknown> = name === "exec_command" ? { cmd: "npm test" } : { session_id: 73 };
+  const tool = nativeTool({ name, id: "incomplete", args, definition: def }) as unknown as NativeToolComponent;
+  const result = { content: [{ type: "text" as const, text: "Validation failed\nMissing required input" }], isError: true };
+  tool.updateResult(result); tool.setExpanded(true);
+  const native = tool.render(120); tool.setExpanded(false);
+  const otherDef = { ...definition("exec_command"), name: "diagnostic" };
+  const other = nativeTool({ name: otherDef.name, id: "other", args: { cmd: "inspect" }, definition: otherDef });
+  other.updateResult({ content: [{ type: "text", text: "ok" }], isError: false });
+  chat.addChild(tool); chat.addChild(other);
+  const dispose = attachTranscriptPresentation(root, { getTheme: () => theme, requestRender: vi.fn(),
+    rules: { [name]: "explore", diagnostic: "explore" } });
+  try {
+    dispose.targets()[0]!.setExpanded(true);
+    const text = () => stripTerminalSequences(chat.render(120).join("\n"));
+    const label = name === "exec_command" ? "Run npm test" : "Check output";
+    expect(text()).toContain("(3 lines)");
+    expect(text()).not.toContain(label);
+
+    args[key] = name === "exec_command" ? "/tmp" : ""; tool.updateArgs(args);
+    expect(text()).toContain(label);
+    expect(text()).not.toContain("(3 lines)");
+    expect(text()).toContain("1 failed");
+    args[key] = undefined; tool.updateArgs(args);
+    expect(text()).not.toContain(label);
+    expect(text()).toContain("(3 lines)");
+    args[key] = name === "exec_command" ? "/tmp" : ""; tool.updateArgs(args);
+    expect(text()).toContain(label);
+    delete args[key]; tool.updateArgs(args);
+    expect(text()).not.toContain(label);
+    expect(text()).toContain("(3 lines)");
+
+    dispose.targets()[1]!.setExpanded(true);
+    expect(tool.render(120).slice(-native.length)).toEqual(native);
+    expect(tool.args).toBe(args); expect(tool.result).toBe(result); expect(tool.toolDefinition).toBe(def);
+    expect(def.execute).not.toHaveBeenCalled();
+    expect(otherDef.execute).not.toHaveBeenCalled();
+  } finally { dispose(); }
+});

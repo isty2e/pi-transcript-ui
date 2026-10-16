@@ -131,15 +131,17 @@ Check output
 Send input
 ```
 
-Recognition requires the exact tool name and a bounded direct object schema: required string `cmd` for `exec_command`, or required numeric `session_id` and declared string `chars` for `write_stdin`. Commands use an unparsed first-line preview, without assuming Bash syntax or applying shell colors. Non-whitespace source on later lines adds `[…]` to mark omission when space permits: `Run cd repo […] (exit 0)`. Trailing blank or whitespace-only lines do not add the marker. A blank first line uses generic/native presentation instead of an empty `Run` label. The exit code describes the whole call, not just the displayed line.
+Recognition requires the exact tool name and a bounded direct object schema: required string `cmd` for `exec_command`, or required numeric `session_id` and declared string `chars` for `write_stdin`. Every declared required field must be present with a defined value before recognition; missing fields are not filled from schema defaults.
 
-For the supported plain-string input contract, absent or empty `chars` means `Check output`; any nonempty string, including whitespace or control input, means `Send input`. The summary does not echo the input or show a session ID. Nonempty binary input, unknown input fields, ambiguous defaults, unsupported schemas and malformed requests keep the existing generic/native presentation. This is not a decoder for provider-specific input formats.
+Commands use an unparsed first-line preview, without assuming Bash syntax or applying shell colors. Non-whitespace source on later lines adds `[…]` to mark omission when space permits: `Run cd repo […] (exit 0)`. Trailing blank or whitespace-only lines do not add the marker. A blank first line uses generic/native presentation instead of an empty `Run` label. The exit code describes the whole call, not just the displayed line.
+
+For the supported plain-string input contract, omitting optional `chars` or providing an empty string means `Check output`; any nonempty string, including whitespace or control input, means `Send input`. The summary does not echo the input or show a session ID. Nonempty binary input, unknown input fields, ambiguous defaults, unsupported schemas and malformed summary inputs keep the existing generic/native presentation. This is not a decoder for provider-specific input formats.
 
 An exit code appears only after the call settles and supported result metadata supplies it. Recognized receipt shapes use `output` and `wall_time_seconds` with `exit_code`, `chunkId` and `wallTimeSeconds` with `exitCode`, or matching `tool`, `status: "exited"`, `output` and `durationMs` with `exitCode`. Missing, malformed or conflicting codes are omitted, not treated as success. Exit codes do not determine the native `— error` marker, and the summary does not infer whether a process is still running. Recognized shell summaries omit output-line totals; a group containing one also omits the group-wide output-line total. Groups still count native calls.
 
 Expanded shell calls keep the same layout as other tools: a leading blank line, the summary row with any purpose text, then the complete original native rendering. The summary remains available for disclosure while waiting for a result and after completion, even if the provider hides its own title or body. Removing duplicate native titles is outside this support; a different policy is deferred until a shared disclosure and purpose-text contract is agreed for all tools.
 
-This changes presentation only. It does not join calls by session ID, reconstruct the command behind `write_stdin`, split scripts into tools or recursively rewrite another extension's nested text components. File-operation recognition takes precedence over these shell summaries.
+This changes presentation only; full argument validation remains with the provider. It does not join calls by session ID, reconstruct the command behind `write_stdin`, split scripts into tools or recursively rewrite another extension's nested text components. File-operation recognition takes precedence over these shell summaries.
 
 ### Codemode
 

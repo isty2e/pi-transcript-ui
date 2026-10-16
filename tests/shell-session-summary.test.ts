@@ -25,6 +25,41 @@ it("projects common requests without assuming shell language or process lifetime
   for (const chars of ["\n", " ", "\u0003", "help\n", "\\x03"]) expect(summarize("write_stdin", { session_id: 1, chars })).toEqual({ action: "Send input" });
 });
 
+it.each(["exec_command", "write_stdin"])("requires every declared input before projecting %s", name => {
+  const key = name === "exec_command" ? "workdir" : "chars";
+  const base = name === "exec_command" ? { cmd: "npm test" } : { session_id: 1 };
+  const value = name === "exec_command" ? "/tmp" : "";
+  const parameters = { ...schema(name, { [key]: { type: "string" } }),
+    required: [name === "exec_command" ? "cmd" : "session_id", key] };
+  const inherited = { ...base }; Object.setPrototypeOf(inherited, { [key]: value });
+  for (const args of [base, { ...base, [key]: undefined }, inherited]) {
+    for (const isPartial of [true, false]) {
+      expect(shellSessionSummary({ toolName: name, parameters, args, isPartial })).toBeUndefined();
+    }
+  }
+  expect(summarize(name, { ...base, [key]: value }, undefined, parameters)?.action)
+    .toBe(name === "exec_command" ? "Run" : "Check output");
+});
+
+it("does not fill missing required inputs from schema defaults", () => {
+  for (const name of ["exec_command", "write_stdin"]) {
+    const key = name === "exec_command" ? "workdir" : "chars";
+    const args = name === "exec_command" ? { cmd: "npm test" } : { session_id: 1 };
+    const parameters = { ...schema(name, { [key]: { type: "string", default: name === "exec_command" ? "/tmp" : "" } }),
+      required: [name === "exec_command" ? "cmd" : "session_id", key] };
+    expect(summarize(name, args, undefined, parameters)).toBeUndefined();
+  }
+});
+
+it("retains defined empty, zero and false required inputs", () => {
+  const parameters = { ...schema("exec_command", { workdir: { type: "string" }, tty: { type: "boolean" }, yield_time_ms: { type: "number" } }),
+    required: ["cmd", "workdir", "tty", "yield_time_ms"] };
+  expect(summarize("exec_command", { cmd: "npm test", workdir: "", tty: false, yield_time_ms: 0 }, undefined, parameters))
+    .toEqual({ action: "Run", command: "npm test" });
+  expect(summarize("write_stdin", { session_id: 0, chars: "" }, undefined, { ...schema("write_stdin"), required: ["session_id", "chars"] }))
+    .toEqual({ action: "Check output" });
+});
+
 it("marks omitted command lines before the whole-script exit code", () => {
   const summary = summarize("exec_command", { cmd: "cd repo\nrm -rf build\nnpm test" },
     { output: "", wall_time_seconds: 1, exit_code: 0 })!;
