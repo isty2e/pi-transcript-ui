@@ -51,7 +51,9 @@ export class IntentTransport {
       const tool = known.get(item.name) ?? foldedNames.get(item.name.toLowerCase());
       if (!tool) return item;
       encountered.add(tool.name);
+      if (item.type === "custom") return item;
       if (hasIntentParameter(tool.parameters)) return item;
+
       let key: "parameters" | "input_schema" | "parametersJsonSchema" | "inputSchema" | undefined;
       if (isRecord(item.parameters)) key = "parameters";
       else if (isRecord(item.input_schema)) key = "input_schema";
