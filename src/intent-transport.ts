@@ -47,11 +47,11 @@ export class IntentTransport {
       if (isRecord(item.function)) return { ...item, function: decorate(item.function) };
       if (Array.isArray(item.functionDeclarations)) return { ...item, functionDeclarations: item.functionDeclarations.map(decorate) };
       if (isRecord(item.toolSpec)) return { ...item, toolSpec: decorate(item.toolSpec) };
-      if (typeof item.name !== "string") return item;
-      const tool = known.get(item.name) ?? foldedNames.get(item.name.toLowerCase());
+      const name = item.name ?? (item.type === "custom" && isRecord(item.custom) ? item.custom.name : undefined);
+      if (typeof name !== "string") return item;
+      const tool = known.get(name) ?? foldedNames.get(name.toLowerCase());
       if (!tool) return item;
       encountered.add(tool.name);
-      if (item.type === "custom") return item;
       if (hasIntentParameter(tool.parameters)) return item;
 
       let key: "parameters" | "input_schema" | "parametersJsonSchema" | "inputSchema" | undefined;
@@ -62,7 +62,7 @@ export class IntentTransport {
       const outer = key ? item[key] : undefined;
       const received = key === "inputSchema" && isRecord(outer) ? outer.json : outer;
       if (!key || !isRecord(received)) {
-        if (policy.enabled) warn(`Intent schema not injected for ${item.name}: no recognized object schema`);
+        if (policy.enabled && item.type !== "custom") warn(`Intent schema not injected for ${name}: no recognized object schema`);
         return item;
       }
       const schema = this.augmentedSchemas.get(received) ?? received;
@@ -73,7 +73,7 @@ export class IntentTransport {
       const rootConstraints = ["$ref", "$dynamicRef", "$recursiveRef", "allOf", "anyOf", "oneOf", "not", "if", "then", "else", "dependentSchemas", "dependentRequired", "dependencies", "propertyNames", "patternProperties", "minProperties", "maxProperties", "enum", "const", "unevaluatedProperties"];
       if (rootConstraints.some((key) => Object.hasOwn(schema, key)) ||
           (schema.type !== undefined && schema.type !== "object") || (schema.type === undefined && !isRecord(schema.properties))) {
-        warn(`Intent schema not injected for ${item.name}: unsupported root schema constraints`);
+        warn(`Intent schema not injected for ${name}: unsupported root schema constraints`);
         return item;
       }
       // Responses defaults to strict normalization (including Pi Codex's null).
