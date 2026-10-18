@@ -18,8 +18,123 @@ const envelopes = [
   (s: unknown) => ({ messages: [{ role: "system", tools: [{ type: "function", function: { name: "custom", parameters: s } }] }] }),
   (s: unknown) => ({ context: { tools: [{ name: "custom", parameters: s }] } }),
   (s: unknown) => ({ config: { tools: [{ functionDeclarations: [{ name: "custom", parameters: s }] }] } }),
+  (s: unknown) => ({ tools: [{ type: "custom", name: "custom", input_schema: s }] }),
 ];
 describe("model-only intent transport", () => {
+  it.each([
+    ["grammar", "codemode", { type: "grammar", syntax: "lark", definition: "start: /.+/" }],
+    ["text", "script", { type: "text" }],
+    ["default text", "script", undefined],
+  ] as const)("passes through %s custom tools without warnings or intent ownership", (_kind, name, format) => {
+    const persist = vi.fn(), transport = new IntentTransport(persist), warn = vi.fn();
+    const declaration = Object.freeze({ type: "custom", name, ...(format === undefined ? {} : { format: Object.freeze(format) }) });
+    const payload = Object.freeze({ tools: Object.freeze([declaration]) });
+
+    expect(transport.preparePayload(payload, [{ name, parameters: schema }], policy, warn)).toEqual(payload);
+    expect(warn).not.toHaveBeenCalled();
+
+    const message = call({ value: "native", displaySummary: "Provider-owned value" }, "c1", name);
+    expect(transport.prepareMessage(message)).toBe(message);
+    expect(transport.get("c1")).toBeUndefined();
+    expect(persist).not.toHaveBeenCalled();
+  });
+  it.each([
+    ["grammar", { type: "grammar", grammar: { syntax: "lark", definition: "start: /.+/" } }],
+    ["text", { type: "text" }],
+    ["default text", undefined],
+  ] as const)("recognizes a sole Completions %s custom tool without acquiring intent", (_kind, format) => {
+    const persist = vi.fn(), transport = new IntentTransport(persist), warn = vi.fn();
+    const custom = Object.freeze({ name: "codemode", ...(format === undefined ? {} : { format }) });
+    const payload = Object.freeze({ tools: Object.freeze([Object.freeze({ type: "custom", custom })]) });
+
+    expect(transport.preparePayload(payload, [{ name: "codemode", parameters: schema }], policy, warn)).toEqual(payload);
+    expect(warn).not.toHaveBeenCalled();
+
+    const message = call({ code: "return 42;", displaySummary: "Provider-owned value" }, "c1", "codemode");
+    expect(transport.prepareMessage(message)).toBe(message);
+    expect(transport.get("c1")).toBeUndefined();
+    expect(persist).not.toHaveBeenCalled();
+  });
+  it("does not count an unknown nested custom name as a recognized tool", () => {
+    const transport = new IntentTransport(vi.fn()), warn = vi.fn();
+    const payload = { tools: [{ type: "custom", custom: { name: "unknown", format: { type: "text" } } }] };
+
+    expect(transport.preparePayload(payload, tools, policy, warn)).toEqual(payload);
+    expect(warn).toHaveBeenCalledOnce();
+  });
+  it.each([undefined, "function", "unrecognized"])("retains missing-schema warnings for declaration type %s", (type) => {
+    const transport = new IntentTransport(vi.fn()), warn = vi.fn();
+    const declaration = Object.freeze({ name: "codemode", ...(type === undefined ? {} : { type }) });
+    const payload = { tools: [declaration] };
+
+    expect(transport.preparePayload(payload, [{ name: "codemode", parameters: schema }], policy, warn)).toEqual(payload);
+    expect(warn).toHaveBeenCalledOnce();
+    const message = call({ value: "native", displaySummary: "Not ours" }, "c1", "codemode");
+    expect(transport.prepareMessage(message)).toBe(message);
+  });
+  it("adds intent to a JSON function named codemode", () => {
+    const transport = new IntentTransport(vi.fn()), warn = vi.fn();
+    const payload = { tools: [{ type: "function", name: "codemode", parameters: schema }] };
+
+    expect(transport.preparePayload(payload, [{ name: "codemode", parameters: schema }], policy, warn)).toMatchObject({
+      tools: [{ parameters: { properties: { displaySummary: { type: ["string", "null"] } } } }],
+    });
+    expect(warn).not.toHaveBeenCalled();
+    const message = transport.prepareMessage(call({ value: "native", displaySummary: "Explain the operation" }, "c1", "codemode")) as ReturnType<typeof call>;
+    expect(message.content[0]!.arguments).toEqual({ value: "native" });
+  });
+  it("retains unsupported JSON root warnings under a custom type label", () => {
+    const persist = vi.fn(), transport = new IntentTransport(persist), warn = vi.fn();
+    const payload = { tools: [{ type: "custom", name: "custom", input_schema: { ...schema, maxProperties: 1 } }] };
+
+    expect(transport.preparePayload(payload, tools, policy, warn)).toEqual(payload);
+    expect(warn).toHaveBeenCalledOnce();
+    const message = call({ value: "native", displaySummary: "Not ours" });
+    expect(transport.prepareMessage(message)).toBe(message);
+    expect(persist).not.toHaveBeenCalled();
+  });
+  it("keeps custom pass-through, JSON injection and missing-schema warnings item-local", () => {
+    const transport = new IntentTransport(vi.fn()), warn = vi.fn();
+    const custom = Object.freeze({ type: "custom", name: "codemode", format: { type: "text" } });
+    const missing = Object.freeze({ type: "function", name: "broken" });
+    const payload = { tools: [custom, { type: "function", name: "custom", parameters: schema }, missing] };
+    const metadata = ["codemode", "custom", "broken"].map(name => ({ name, parameters: schema }));
+    const prepared = transport.preparePayload(payload, metadata, policy, warn) as { tools: unknown[] };
+
+    expect(prepared.tools[0]).toBe(custom);
+    expect(prepared.tools[1]).toMatchObject({ parameters: { properties: { displaySummary: { type: ["string", "null"] } } } });
+    expect(prepared.tools[2]).toBe(missing);
+    expect(warn).toHaveBeenCalledOnce();
+
+    const message = transport.prepareMessage(call({ value: "native", displaySummary: "Explain the JSON tool" })) as ReturnType<typeof call>;
+    expect(message.content[0]!.arguments).toEqual({ value: "native" });
+    expect(transport.get("c1")?.source).toBe("model");
+  });
+  it("does not retain JSON intent ownership when a request switches to custom and back", () => {
+    const persist = vi.fn(), transport = new IntentTransport(persist), warn = vi.fn();
+    const json = { tools: [{ type: "function", name: "custom", parameters: schema }] };
+    transport.preparePayload(json, tools, policy, warn);
+
+    const custom = { tools: [{ type: "custom", custom: { name: "custom", format: { type: "text" } } }] };
+    expect(transport.preparePayload(custom, tools, policy, warn)).toEqual(custom);
+    const untouched = call({ value: "native", displaySummary: "Provider-owned value" });
+    expect(transport.prepareMessage(untouched)).toBe(untouched);
+    expect(persist).not.toHaveBeenCalled();
+
+    transport.preparePayload({ tools: [{ type: "custom", name: "custom", input_schema: schema }] }, tools, policy, warn);
+    const message = transport.prepareMessage(call({ value: "native", displaySummary: "Owned again" }, "c2")) as ReturnType<typeof call>;
+    expect(message.content[0]!.arguments).toEqual({ value: "native" });
+    expect(transport.get("c2")?.text).toBe("Owned again");
+    expect(persist).toHaveBeenCalledOnce();
+    expect(warn).not.toHaveBeenCalled();
+  });
+  it("recognizes deferred custom tools without a missing-schema or whole-payload warning", () => {
+    const transport = new IntentTransport(vi.fn()), warn = vi.fn();
+    const payload = { input: [{ type: "tool_search_output", tools: [{ type: "custom", name: "custom", format: { type: "text" } }] }] };
+
+    expect(transport.preparePayload(payload, tools, policy, warn)).toEqual(payload);
+    expect(warn).not.toHaveBeenCalled();
+  });
   for (const [index, envelope] of envelopes.entries()) it(`augments provider envelope ${index}, never native schema`, () => {
     const persist = vi.fn(), transport = new IntentTransport(persist), warn = vi.fn();
     const payload = envelope(schema);

@@ -52,6 +52,8 @@ Explicit Bash and zsh `exec_command` calls support Compact formatting with disti
 
 Purpose text depends on the model, provider and tool supporting the intent request. It is discretionary even when supported. A missing purpose is not itself an error; the command or path can still be shown.
 
+Purpose parameters are injected into supported JSON object schemas, including client tools marked `type: "custom"`. Freeform custom declarations without a recognized JSON schema, such as grammar-based `codemode` requests, pass through unchanged without a missing-schema warning.
+
 Unsupported UI components keep native presentation and produce a diagnostic rather than having their output reconstructed. Unusual renderers, image display and very large session histories are not covered by a blanket compatibility guarantee.
 
 Summaries do not replace tool execution, permissions or expanded output. Command previews and line counts are not a security review, an execution trace or a complete filesystem diff.
