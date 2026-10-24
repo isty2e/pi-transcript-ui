@@ -29,7 +29,15 @@ export default function nativeChildrenFixture(pi: ExtensionAPI) {
         const makeTool = (id: string) => new ToolExecutionComponent(definition.name, id, {}, { showImages: true }, definition,
           { requestRender() {} } as never, ctx.cwd);
         const baseline = makeTool("baseline"), native = makeTool("decorated");
-        storage = Object.hasOwn(native, "children") ? "own-data" : "inherited-accessor";
+        let prototype: object | null = Object.getPrototypeOf(native);
+        let descriptor: PropertyDescriptor | undefined;
+        while (prototype && !descriptor) {
+          descriptor = Object.getOwnPropertyDescriptor(prototype, "children");
+          prototype = Object.getPrototypeOf(prototype);
+        }
+        assert.ok(!Object.hasOwn(native, "children") && typeof descriptor?.get === "function" &&
+          typeof descriptor.set === "function", "This fixture requires native inherited read/write children accessors");
+        storage = "inherited-accessor";
         const chat = new Container(), root = new Container(); root.addChild(chat); chat.addChild(native);
         const warnings: unknown[] = [];
         const attach = (grouped = false) => attachTranscriptPresentation(root, { getTheme: () => theme, requestRender() {},
