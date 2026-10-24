@@ -672,8 +672,10 @@ export function attachTranscriptPresentation(root: { children: Component[] }, op
     const binding = decorations.get(child as NativeToolComponent);
     const source: CleanupSource = binding ? { kind: "tool", toolName: binding.toolName } : { kind: "attachment" };
     const cleanup = releaseChild(child);
-    const reconciled = attemptCleanup("transcript reconciliation", reconcile);
+    const reconciled = attemptCleanup("transcript reconciliation", reconcileGroups);
     reportCleanup(source, combineCleanup([cleanup, reconciled]));
+    try { options.requestRender(); }
+    catch { /* A failed redraw does not mean restoration failed. */ }
   };
   const clear = function (this: ChatContainer): void {
     const cleanup = active ? clearDecorations() : COMPLETE;

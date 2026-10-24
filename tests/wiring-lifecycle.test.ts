@@ -198,6 +198,44 @@ describe("native children and cleanup boundaries", () => {
     expect(() => dispose()).not.toThrow();
   });
 
+  it("does not report successful removal cleanup as incomplete when only redraw fails", () => {
+    const { root, chat } = transcript();
+    const native = tool("removed");
+    native.updateResult(result("RESTORED NATIVE BODY"));
+    const originalRender = native.render;
+    const incomplete = vi.fn(), unsupported = vi.fn();
+    const requestRender = vi.fn(() => { throw new Error("redraw unavailable"); });
+    const dispose = attachTranscriptPresentation(root, { getTheme: () => theme, requestRender,
+      onCleanupIncomplete: incomplete, onUnsupported: unsupported });
+    chat.addChild(native);
+    expect(() => chat.removeChild(native)).not.toThrow();
+    expect(chat.children).toEqual([]);
+    expect(native.render).toBe(originalRender);
+    expect(native.render(80).join("\n")).toContain("RESTORED NATIVE BODY");
+    expect(dispose.targets()).toEqual([]);
+    expect(requestRender).toHaveBeenCalledOnce();
+    expect(incomplete).not.toHaveBeenCalled();
+    expect(unsupported).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it("still reports failed group-state repair after restoring the removed component", () => {
+    const { root, chat } = transcript();
+    const incomplete = vi.fn();
+    const dispose = attachTranscriptPresentation(root, { getTheme: () => theme, requestRender() {}, onCleanupIncomplete: incomplete });
+    const removed = tool("removed"), remaining = tool("remaining");
+    chat.addChild(removed); chat.addChild(remaining);
+    const error = new Error("group state unavailable");
+    Object.defineProperty(remaining, "expanded", { configurable: true, get() { throw error; } });
+    expect(() => chat.removeChild(removed)).not.toThrow();
+    expect(chat.children).toEqual([remaining]);
+    expect(incomplete).toHaveBeenCalledOnce();
+    expect(incomplete).toHaveBeenCalledWith({ kind: "tool", toolName: "fixture" }, expect.objectContaining({
+      failures: expect.arrayContaining([expect.objectContaining({ error })]),
+    }));
+    dispose();
+  });
+
   for (const operation of ["addChild", "removeChild", "clear"] as const) {
     it(`preserves the original host ${operation} exception`, () => {
       const { root, chat } = transcript();

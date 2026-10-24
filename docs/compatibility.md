@@ -108,4 +108,4 @@ If the file changed while the dialog was open, reopen the dialog and make the ed
 
 ### Cleanup is incomplete
 
-`transcript-ui cleanup incomplete` means a presentation property could not be restored, not that a tool failed. The extension disables that projection and continues other cleanup and Pi's original operations. This differs from a clean native fallback. If presentation remains unexpected, restart Pi; a frozen or externally replaced property cannot always be repaired in place.
+`transcript-ui cleanup incomplete` means presentation state could not be fully restored, not that a tool failed. The extension disables that projection and continues other cleanup and Pi's original operations. This differs from a clean native fallback; a failed redraw alone is not incomplete cleanup. If presentation remains unexpected, restart Pi; a frozen or externally replaced property cannot always be repaired in place.
