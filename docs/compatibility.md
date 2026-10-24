@@ -12,7 +12,9 @@ pi-transcript-ui presents tool summaries in interactive Pi sessions. Compatibili
 | 1.1.0 | Shared UI/session/compositor fixtures, structured prompts and native codemode execution |
 | 0.85.1 | Shared UI/session/compositor fixtures and legacy string prompts; no native codemode |
 
-Each host uses matching versions of its Pi runtime dependencies, including core, AI and TUI, plus codemode and MCP where present. Vitest isolates test execution and binds this extension to the selected SDK/TUI. Compatibility hosts share a focused set of native UI, grouping/navigation, compositor and session/prompt checks. Unit, parser, detailed formatting and publication-workflow tests run only on the primary host.
+An opt-in native-component check also covers Pi 1.4.0 / Pi-Bolt 1.0.0 (`darwin-arm64-jit`): partial/final result updates, independent group/member expansion, parent rendering, detach/reattach, and original image bytes in default and self-rendered shells. Pi-Bolt is not a CI host. The check runs only when `PI_TRANSCRIPT_UI_TEST_BOLT` points to a Pi-Bolt executable; it does not establish complete terminal or extension-stack compatibility.
+
+The SDK-based suites use matching versions of their Pi runtime dependencies, including core, AI and TUI, plus codemode and MCP where present. Vitest isolates test execution and binds this extension to the selected SDK/TUI. Compatibility hosts share a focused set of native UI, grouping/navigation, compositor and session/prompt checks. Unit, parser, detailed formatting and publication-workflow tests run only on the primary host.
 
 Test admission follows release capabilities: structured prompt sections from 0.86.0, native codemode from 0.99.0, recorded tool duration from 1.1.0 and trigger-object prompt hooks from 1.2.0. Only the representative hosts listed above are exercised. These component, session and compositor-fixture tests do not establish complete interactive terminal sessions or compatibility with every release in those ranges.
 
@@ -55,6 +57,8 @@ Purpose text depends on the model, provider and tool supporting the intent reque
 Purpose parameters are injected into supported JSON object schemas, including client tools marked `type: "custom"`. Freeform custom declarations without a recognized JSON schema, such as grammar-based `codemode` requests, pass through unchanged without a missing-schema warning.
 
 Unsupported UI components keep native presentation and produce a diagnostic rather than having their output reconstructed. Unusual renderers, image display and very large session histories are not covered by a blanket compatibility guarantee.
+
+Native tool components can expose their child collection as an own array or through inherited read/write accessors. Existing own accessor overrides are left untouched rather than stacked with another presentation wrapper. Cleanup restores only properties still owned by this extension; foreign replacements are preserved.
 
 Summaries do not replace tool execution, permissions or expanded output. Command previews and line counts are not a security review, an execution trace or a complete filesystem diff.
 
@@ -101,3 +105,7 @@ Purpose text is optional. Result counts require usable evidence from a finished 
 Invalid files are reported and left untouched. Correct the JSON or values using the [settings reference](settings.md), then run `/reload`.
 
 If the file changed while the dialog was open, reopen the dialog and make the edit again. Avoid changing the same file from multiple sessions or editors at once. Check that the settings directory is writable if saving reports a filesystem error.
+
+### Cleanup is incomplete
+
+`transcript-ui cleanup incomplete` means a presentation property could not be restored, not that a tool failed. The extension disables that projection and continues other cleanup and Pi's original operations. This differs from a clean native fallback. If presentation remains unexpected, restart Pi; a frozen or externally replaced property cannot always be repaired in place.

@@ -5,8 +5,9 @@ import { join } from "node:path";
 import { Container, stripTerminalSequences, visibleWidth, type Component } from "@earendil-works/pi-tui";
 import { initTheme, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
 import transcriptUi from "../../src/index.js";
+import { withAccessorChildren } from "../fixtures/native-children.js";
 
-it("live settings, reload and session navigation retain native body/expansion and restore intent", async () => {
+it.each(["data", "accessor"])("%s children: live settings, reload and session navigation retain native body/expansion and restore intent", async (storage) => {
   const dir = await mkdtemp(join(tmpdir(), "transcript-presentation-"));
   vi.stubEnv("PI_TRANSCRIPT_UI_SETTINGS", join(dir, "settings.json"));
   initTheme();
@@ -22,12 +23,14 @@ it("live settings, reload and session navigation retain native body/expansion an
   };
   const root = new Container(), chat = new Container(); root.addChild(chat);
   const args = {}, tool = new ToolExecutionComponent("custom", "c1", args, {}, undefined, { requestRender: vi.fn() } as never, dir);
+  if (storage === "accessor") withAccessorChildren(tool);
   chat.addChild(tool);
   tool.updateResult({ content: [{ type: "text", text: "NATIVE BODY" }], isError: false, durationMs: 1234 });
   tool.setExpanded(true);
   const native = tool.render(80);
   const bashArgs = { command: 'cd /Users/example/' + 'long-directory/'.repeat(12) + 'project && git status' };
   const bash = new ToolExecutionComponent('bash', 'b1', bashArgs, {}, undefined, { requestRender: vi.fn() } as never, dir);
+  if (storage === "accessor") withAccessorChildren(bash);
   bash.updateResult({ content: [{ type: 'text', text: 'BASH BODY' }], isError: false });
   bash.setExpanded(true);
   const nativeBash = bash.render(80);

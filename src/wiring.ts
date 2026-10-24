@@ -57,7 +57,7 @@ function isTool(value: Component): value is NativeToolComponent {
     typeof c.expanded === "boolean" && typeof c.isPartial === "boolean" &&
     typeof c.setExpanded === "function" && typeof c.updateDisplay === "function" &&
     typeof c.updateArgs === "function" && typeof c.updateResult === "function" &&
-    typeof c.addChild === "function" && typeof c.removeChild === "function" && typeof c.clear === "function" && Array.isArray(c.children);
+    typeof c.addChild === "function" && typeof c.removeChild === "function" && typeof c.clear === "function";
 }
 
 function phaseFor(tool: NativeToolComponent): ToolPhase {
@@ -152,7 +152,8 @@ class ToolGroup extends SummaryRow implements DisclosureTarget {
   inheritExpansion(other: ToolGroup): void { this.open ||= other.open; }
   resetMembers(): void { this.members.length = 0; this.classifications.clear(); }
   removeMember(tool: NativeToolComponent): void {
-    this.members.splice(this.members.indexOf(tool), 1);
+    const index = this.members.indexOf(tool);
+    if (index >= 0) this.members.splice(index, 1);
     this.classifications.delete(tool);
   }
   constructor(id: number, readonly classification: ToolClassification,
@@ -200,31 +201,136 @@ export interface PresentationOptions {
   displayLimits?: Readonly<Partial<DisplayLimits>>;
   resolveIntent?(toolCallId: string, args: unknown): string | undefined;
   onUnsupported?(toolName: string, error: unknown): void;
+  onCleanupIncomplete?(source: CleanupSource, failure: CleanupIncomplete): void;
 }
 export interface PresentationAttachment {
   (): void;
   targets(): readonly DisclosureTarget[];
 }
 
-/** Scoped native-tree access leaves Pi's state, definition, shell and lifecycle authoritative. */
-function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null, options: PresentationOptions, capabilities: FileCapabilities, classification: ToolClassification, onUpdate?: () => void) {
-  let group = initialGroup;
-  const capability = capabilities.mutation;
-  const childrenDescriptor = Object.getOwnPropertyDescriptor(tool, "children");
-  if (!childrenDescriptor || childrenDescriptor.configurable === false || !("value" in childrenDescriptor)) {
-    throw new Error("Unsupported tool children descriptor");
+interface CleanupFailure { readonly slot: string; readonly error: unknown }
+interface CleanupIncomplete { readonly kind: "cleanup-incomplete"; readonly failures: readonly CleanupFailure[] }
+type CleanupOutcome = { readonly kind: "complete" } | CleanupIncomplete;
+type CleanupSource = { readonly kind: "tool"; readonly toolName: string } | { readonly kind: "attachment" };
+const COMPLETE: CleanupOutcome = { kind: "complete" };
+
+function cleanupOutcome(failures: readonly CleanupFailure[]): CleanupOutcome {
+  return failures.length ? { kind: "cleanup-incomplete", failures } : COMPLETE;
+}
+
+function combineCleanup(outcomes: Iterable<CleanupOutcome>): CleanupOutcome {
+  const failures: CleanupFailure[] = [];
+  for (const outcome of outcomes) {
+    if (outcome.kind === "cleanup-incomplete") for (const failure of outcome.failures) failures.push(failure);
   }
+  return cleanupOutcome(failures);
+}
+
+function attemptCleanup(slot: string, action: () => void): CleanupOutcome {
+  try { action(); return COMPLETE; }
+  catch (error) { return cleanupOutcome([{ slot, error }]); }
+}
+
+function reportSafely(report: () => void): void {
+  try { report(); } catch { /* A diagnostic cannot interrupt Pi's caller. */ }
+}
+
+function sameDescriptor(current: PropertyDescriptor | undefined, expected: PropertyDescriptor): boolean {
+  if (!current || current.configurable !== expected.configurable || current.enumerable !== expected.enumerable ||
+    ("value" in current) !== ("value" in expected)) return false;
+  return "value" in expected ? current.value === expected.value && current.writable === expected.writable
+    : current.get === expected.get && current.set === expected.set;
+}
+
+function restoreDescriptor(target: Component, key: string, descriptor: PropertyDescriptor | undefined): void {
+  if (descriptor) Object.defineProperty(target, key, descriptor);
+  else if (!Reflect.deleteProperty(target, key)) throw new TypeError(`Cannot remove presentation property: ${key}`);
+}
+
+function restoreIfOwned(target: Component, key: string, expected: PropertyDescriptor, restore: () => void): CleanupOutcome {
+  return attemptCleanup(key, () => {
+    if (sameDescriptor(Object.getOwnPropertyDescriptor(target, key), expected)) restore();
+  });
+}
+
+function propertyDescriptor(target: Component, key: string): PropertyDescriptor | undefined {
+  let owner: object | null = target;
+  while (owner) {
+    const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+    if (descriptor) return descriptor;
+    owner = Object.getPrototypeOf(owner);
+  }
+  return undefined;
+}
+
+interface NativeChildrenAccess {
+  readonly enumerable: boolean;
+  read(): Component[];
+  write(children: Component[]): void;
+  restoreIfOwned(get: () => Component[], set: (children: Component[]) => void): CleanupOutcome;
+}
+
+function captureNativeChildren(tool: NativeToolComponent): NativeChildrenAccess {
+  const own = Object.getOwnPropertyDescriptor(tool, "children");
+  let read: () => Component[];
+  let write: (children: Component[]) => void;
+  let restore: () => void;
+  let enumerable: boolean;
+
+  if (own) {
+    if (!("value" in own) || !own.configurable || !own.writable || !Array.isArray(own.value)) {
+      throw new TypeError("Unsupported tool children descriptor");
+    }
+    let children: Component[] = own.value;
+    enumerable = own.enumerable ?? false;
+    read = () => children;
+    write = next => { children = next; };
+    restore = () => Object.defineProperty(tool, "children", { ...own, value: children });
+  } else {
+    const inherited = propertyDescriptor(tool, "children");
+    if (!inherited?.get || !inherited.set) throw new TypeError("Unsupported tool children descriptor");
+    const get = inherited.get, set = inherited.set;
+    read = () => get.call(tool) as Component[];
+    if (!Array.isArray(read())) throw new TypeError("Unsupported native children collection");
+    enumerable = inherited.enumerable ?? false;
+    write = children => { set.call(tool, children); };
+    restore = () => restoreDescriptor(tool, "children", undefined);
+  }
+
+  return {
+    enumerable, read, write,
+    restoreIfOwned(get, set) {
+      return restoreIfOwned(tool, "children", { configurable: true, enumerable, get, set }, restore);
+    },
+  };
+}
+
+type ToolDecoration = {
+  readonly toolName: string;
+  target: DisclosureTarget;
+  readonly group: ToolGroup | null;
+  setGroup(group: ToolGroup | null): void;
+  setClassification(classification: ToolClassification): void;
+  release(): CleanupOutcome;
+};
+type DecorationAttempt = { kind: "decorated"; binding: ToolDecoration } |
+  { kind: "native"; error: unknown } | { kind: "cleanup-incomplete"; error: unknown; cleanup: CleanupIncomplete };
+
+/** Scoped native-tree access leaves Pi's state, definition, shell and lifecycle authoritative. */
+function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null, options: PresentationOptions, capabilities: FileCapabilities,
+  classification: ToolClassification, onUpdate: (() => void) | undefined,
+  onFailure: (error: unknown, cleanup: CleanupOutcome) => void): DecorationAttempt {
+  let group = initialGroup;
+  const toolName = tool.toolName;
+  const capability = capabilities.mutation;
+  const children = captureNativeChildren(tool);
   const methodKeys = ["render", "invalidate", "updateDisplay", "handleMouse", "setExpanded", "addChild", "removeChild", "clear"] as const;
   if (!Object.isExtensible(tool) || methodKeys.some((key) => {
-    let owner: object | null = tool;
-    while (owner) {
-      const d = Object.getOwnPropertyDescriptor(owner, key);
-      if (d) return !("value" in d) || d.writable !== true;
-      owner = Object.getPrototypeOf(owner);
-    }
-    return false;
+    const descriptor = propertyDescriptor(tool, key);
+    return descriptor ? !("value" in descriptor) || descriptor.writable !== true ||
+      (typeof descriptor.value !== "function" && !(key === "handleMouse" && descriptor.value === undefined))
+      : key !== "handleMouse";
   })) throw new Error("Unsupported non-writable tool component; native rendering retained");
-  let nativeChildren = tool.children;
   let nativeDepth = 0;
   let active = true;
   const native = <T>(fn: () => T): T => {
@@ -270,7 +376,7 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
   // This body is the entire original rendering, including its leading spacer,
   // shell, fallbacks and images. No text extraction, reindentation or truncation.
   const body: Component & { readonly children: Component[] } = {
-    get children() { return nativeChildren; },
+    get children() { return children.read(); },
     render: (width) => native(() => originalRender.call(tool, width)),
     invalidate: () => native(() => originalInvalidate.call(tool)),
   };
@@ -290,19 +396,18 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
     get parent() { return group && group.members.length > 1 ? group : undefined; },
     setExpanded(expanded) { if (active) tool.setExpanded(expanded); },
   };
-  const childrenGet = () => nativeDepth > 0 || !active ? nativeChildren : projectedChildren();
-  Object.defineProperty(tool, "children", {
-    configurable: true, enumerable: childrenDescriptor.enumerable ?? true,
-    get: childrenGet,
-    set: (children: Component[]) => { nativeChildren = children; },
-  });
+  const childrenGet = () => nativeDepth > 0 || !active ? children.read() : projectedChildren();
+  const childrenSet = (next: Component[]) => children.write(next);
   const render: NativeToolComponent["render"] = function (width) {
     if (!active || nativeDepth > 0) return native(() => originalRender.call(tool, width));
     return projectedChildren().flatMap((child) => child.render(width));
   };
   const update = () => {
     native(() => originalUpdate.call(tool));
-    if (active && nativeDepth === 0) onUpdate?.();
+    if (active && nativeDepth === 0) {
+      try { onUpdate?.(); }
+      catch (error) { onFailure(error, release()); }
+    }
   };
   const invalidate = () => native(() => originalInvalidate.call(tool));
   const mouse: NonNullable<Component["handleMouse"]> = (event) => {
@@ -328,31 +433,39 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
   };
   const setExpanded = (expanded: boolean) => {
     native(() => originalExpanded.call(tool, expanded));
-    if (active && expanded) group?.setExpanded(true);
+    if (active && expanded) {
+      try { group?.setExpanded(true); }
+      catch (error) { onFailure(error, release()); }
+    }
   };
   const add = (child: Component) => native(() => originalAdd.call(tool, child));
   const remove = (child: Component) => native(() => originalRemove.call(tool, child));
   const clear = () => native(() => originalClear.call(tool));
-  tool.addChild = add; tool.removeChild = remove; tool.clear = clear;
-  tool.render = render;
-  tool.updateDisplay = update;
-  tool.invalidate = invalidate;
-  tool.handleMouse = mouse;
-  tool.setExpanded = setExpanded;
-  return { target, get group() { return group; }, setGroup(next: ToolGroup | null) { group = next; },
-    setClassification(next: ToolClassification) { classification = next; }, release: () => {
+  const replacements = { render, invalidate, updateDisplay: update, handleMouse: mouse, setExpanded, addChild: add, removeChild: remove, clear };
+  const installed = new Map<string, PropertyDescriptor>();
+  function release(): CleanupOutcome {
     active = false;
-    colorizer?.clear();
-    for (const [key, replacement] of [["render", render], ["updateDisplay", update], ["invalidate", invalidate], ["handleMouse", mouse], ["setExpanded", setExpanded], ["addChild", add], ["removeChild", remove], ["clear", clear]] as const) {
-      if (Reflect.get(tool, key) !== replacement) continue;
-      const descriptor = descriptors.get(key);
-      if (descriptor) Object.defineProperty(tool, key, descriptor);
-      else Reflect.deleteProperty(tool, key);
+    const outcomes = [attemptCleanup("command colorizer", () => colorizer?.clear())];
+    for (const [key, expected] of installed) {
+      outcomes.push(restoreIfOwned(tool, key, expected, () => restoreDescriptor(tool, key, descriptors.get(key))));
     }
-    if (Object.getOwnPropertyDescriptor(tool, "children")?.get === childrenGet) {
-      Object.defineProperty(tool, "children", { ...childrenDescriptor, value: nativeChildren });
+    outcomes.push(children.restoreIfOwned(childrenGet, childrenSet));
+    return combineCleanup(outcomes);
+  }
+
+  try {
+    Object.defineProperty(tool, "children", { configurable: true, enumerable: children.enumerable, get: childrenGet, set: childrenSet });
+    for (const key of methodKeys) {
+      const expected = { ...(descriptors.get(key) ?? { configurable: true, enumerable: true, writable: true }), value: replacements[key] };
+      installed.set(key, expected);
+      Object.defineProperty(tool, key, expected);
     }
-  } };
+  } catch (error) {
+    const cleanup = release();
+    return cleanup.kind === "complete" ? { kind: "native", error } : { kind: "cleanup-incomplete", error, cleanup };
+  }
+  return { kind: "decorated", binding: { toolName, target, get group() { return group; }, setGroup(next) { group = next; },
+    setClassification(next) { classification = next; }, release } };
 }
 
 /** Attach to Pi 0.85's actual chat container. No prototype patch or editor/footer ownership. */
@@ -371,8 +484,8 @@ export function attachTranscriptPresentation(root: { children: Component[] }, op
     throw new Error("Unsupported Pi transcript container; native tools left unchanged");
   }
   const container = chat as ChatContainer;
-  const releases = new Map<Component, () => void>();
-  const decorations = new Map<NativeToolComponent, ReturnType<typeof decorateTool>>();
+  const releases = new Map<Component, () => CleanupOutcome>();
+  const decorations = new Map<NativeToolComponent, ToolDecoration>();
   const classifications = new Map<NativeToolComponent, ToolClassification>();
   const assistants = new Set<Component>();
   const capabilities = new Map<NativeToolComponent, FileCapabilities>();
@@ -383,30 +496,63 @@ export function attachTranscriptPresentation(root: { children: Component[] }, op
   const originalRemove = container.removeChild;
   const originalClear = container.clear;
   const originalDescriptors = new Map(["addChild", "removeChild", "clear"].map((key) => [key, Object.getOwnPropertyDescriptor(container, key)]));
+  const reportUnsupported = (name: string, error: unknown) => reportSafely(() => options.onUnsupported?.(name, error));
+  const reportCleanup = (source: CleanupSource, outcome: CleanupOutcome) => {
+    if (outcome.kind === "cleanup-incomplete") reportSafely(() => options.onCleanupIncomplete?.(source, outcome));
+  };
+  const unpublishTool = (child: NativeToolComponent, binding: ToolDecoration): CleanupOutcome => {
+    if (decorations.get(child) !== binding) return COMPLETE;
+    releases.delete(child);
+    decorations.delete(child);
+    classifications.delete(child);
+    capabilities.delete(child);
+    return attemptCleanup("group membership", () => binding.group?.removeMember(child));
+  };
+  const releaseChild = (child: Component): CleanupOutcome => {
+    const release = releases.get(child);
+    if (!release) return COMPLETE;
+    releases.delete(child);
+    try { return release(); }
+    catch (error) { return cleanupOutcome([{ slot: "component release", error }]); }
+  };
   const observe = (child: Component): void => {
     if (!active || releases.has(child)) return;
     if (!isTool(child)) {
       if (isAssistant(child) && !assistants.has(child)) {
         const original = child.updateContent;
         const descriptor = Object.getOwnPropertyDescriptor(child, "updateContent");
+        let observing = true;
         const update: typeof original = function (this: NativeAssistantComponent, ...args) {
-          const before = transparentAssistant(child);
+          if (!active || !observing) return original.apply(this, args);
+          let before: boolean | undefined;
+          let observationError: unknown;
+          try { before = transparentAssistant(child); } catch (error) { observationError = error; }
           const result = original.apply(this, args);
-          if (active && before !== transparentAssistant(child)) reconcile();
+          try {
+            if (before === undefined) throw observationError;
+            if (active && before !== transparentAssistant(child)) reconcile();
+          } catch (error) {
+            const cleanup = releaseChild(child);
+            if (cleanup.kind === "complete") reportUnsupported("assistant", error);
+            else reportCleanup({ kind: "attachment" }, cleanup);
+          }
           return result;
         };
+        const expected = { ...(descriptor ?? { configurable: true, enumerable: true, writable: true }), value: update };
+        const release = () => {
+          observing = false;
+          assistants.delete(child);
+          return restoreIfOwned(child, "updateContent", expected, () => restoreDescriptor(child, "updateContent", descriptor));
+        };
         try {
-          child.updateContent = update;
-          if (child.updateContent !== update) throw new Error("Unsupported assistant update hook");
+          Object.defineProperty(child, "updateContent", expected);
           assistants.add(child);
-          releases.set(child, () => {
-            assistants.delete(child);
-            if (child.updateContent === update) {
-              if (descriptor) Object.defineProperty(child, "updateContent", descriptor);
-              else Reflect.deleteProperty(child, "updateContent");
-            }
-          });
-        } catch (error) { options.onUnsupported?.("assistant", error); }
+          releases.set(child, release);
+        } catch (error) {
+          const cleanup = release();
+          if (cleanup.kind === "complete") reportUnsupported("assistant", error);
+          else reportCleanup({ kind: "attachment" }, cleanup);
+        }
       }
       if (!assistants.has(child) || !transparentAssistant(child)) run = null;
       return;
@@ -437,27 +583,52 @@ export function attachTranscriptPresentation(root: { children: Component[] }, op
       run = new ToolGroup(groupId++, classification, (tool) => capabilities.get(tool), options.getTheme, options.requestRender, options.displayLimits?.rowMaxWidth);
     }
     const group = run;
-    let decorated: ReturnType<typeof decorateTool>;
-    try { decorated = decorateTool(child, group, options, capability, classification, parsePatch ? refresh : undefined); }
+    const name = child.toolName;
+    let decorated: ToolDecoration | undefined;
+    const failed = (error: unknown, cleanup: CleanupOutcome) => {
+      run = null;
+      parsePatch = undefined;
+      const published = decorated !== undefined && decorations.get(child) === decorated;
+      const outcomes = [cleanup, decorated ? unpublishTool(child, decorated) : COMPLETE];
+      if (published) outcomes.push(attemptCleanup("group reconciliation", reconcileGroups));
+      const outcome = combineCleanup(outcomes);
+      if (outcome.kind === "complete") reportUnsupported(name, error);
+      else reportCleanup({ kind: "tool", toolName: name }, outcome);
+    };
+    let attempt: DecorationAttempt;
+    try { attempt = decorateTool(child, group, options, capability, classification, parsePatch ? refresh : undefined, failed); }
     catch (error) {
       run = null;
-      options.onUnsupported?.(child.toolName, error);
+      reportUnsupported(name, error);
       return;
     }
-    capabilities.set(child, capability);
-    group?.addMember(child, classification);
-    decorations.set(child, decorated);
-    classifications.set(child, classification);
-    releases.set(child, () => {
-      parsePatch = undefined;
-      decorations.delete(child);
-      classifications.delete(child);
-      decorated.release();
-      decorated.group?.removeMember(child);
-      capabilities.delete(child);
-    });
+    if (attempt.kind !== "decorated") {
+      failed(attempt.error, attempt.kind === "native" ? COMPLETE : attempt.cleanup);
+      return;
+    }
+    const binding = attempt.binding;
+    decorated = binding;
+    try {
+      decorations.set(child, binding);
+      capabilities.set(child, capability);
+      classifications.set(child, classification);
+      group?.addMember(child, classification);
+      releases.set(child, () => {
+        parsePatch = undefined;
+        return combineCleanup([binding.release(), unpublishTool(child, binding)]);
+      });
+    } catch (error) { failed(error, binding.release()); }
   };
-  const reconcile = () => {
+  const observeSafely = (child: Component) => {
+    try { observe(child); }
+    catch (error) {
+      run = null;
+      const cleanup = releaseChild(child);
+      if (cleanup.kind === "complete") reportUnsupported("component", error);
+      else reportCleanup({ kind: "attachment" }, cleanup);
+    }
+  };
+  const reconcileGroups = () => {
     const visibleExpanded = new Set([...decorations].filter(([tool, { group }]) =>
       tool.expanded && (!group || group.members.length < 2 || group.expanded)).map(([tool]) => tool));
     const previous = new Map([...decorations].map(([tool, binding]) => [tool, binding.group]));
@@ -483,42 +654,55 @@ export function attachTranscriptPresentation(root: { children: Component[] }, op
       binding.setGroup(run);
       run?.addMember(child, classification, visibleExpanded.has(child));
     }
-    options.requestRender();
   };
+  const reconcile = () => { reconcileGroups(); options.requestRender(); };
   const clearDecorations = () => {
-    for (const release of releases.values()) release();
-    releases.clear(); run = null;
+    const outcomes: CleanupOutcome[] = [];
+    for (const child of releases.keys()) outcomes.push(releaseChild(child));
+    run = null;
+    return combineCleanup(outcomes);
   };
   const add = function (this: ChatContainer, child: Component): void {
     originalAdd.call(this, child);
-    observe(child);
+    if (active) observeSafely(child);
   };
   const remove = function (this: ChatContainer, child: Component): void {
     originalRemove.call(this, child);
-    releases.get(child)?.(); releases.delete(child); reconcile();
+    if (!active) return;
+    const binding = decorations.get(child as NativeToolComponent);
+    const source: CleanupSource = binding ? { kind: "tool", toolName: binding.toolName } : { kind: "attachment" };
+    const cleanup = releaseChild(child);
+    const reconciled = attemptCleanup("transcript reconciliation", reconcile);
+    reportCleanup(source, combineCleanup([cleanup, reconciled]));
   };
   const clear = function (this: ChatContainer): void {
-    clearDecorations(); originalClear.call(this);
+    const cleanup = active ? clearDecorations() : COMPLETE;
+    try { originalClear.call(this); }
+    finally { reportCleanup({ kind: "attachment" }, cleanup); }
   };
+  const installedChat = new Map<string, PropertyDescriptor>();
   const restoreChatMethods = () => {
-    for (const [key, replacement] of [["addChild", add], ["removeChild", remove], ["clear", clear]] as const) {
-      if (container[key] !== replacement) continue;
-      const descriptor = originalDescriptors.get(key);
-      if (descriptor) Object.defineProperty(container, key, descriptor);
-      else Reflect.deleteProperty(container, key);
+    const outcomes: CleanupOutcome[] = [];
+    for (const [key, expected] of installedChat) {
+      outcomes.push(restoreIfOwned(container, key, expected, () => restoreDescriptor(container, key, originalDescriptors.get(key))));
     }
+    return combineCleanup(outcomes);
   };
   try {
-    for (const child of container.children) observe(child);
-    container.addChild = add; container.removeChild = remove; container.clear = clear;
+    for (const child of container.children) observeSafely(child);
+    for (const [key, replacement] of [["addChild", add], ["removeChild", remove], ["clear", clear]] as const) {
+      const expected = { ...(originalDescriptors.get(key) ?? { configurable: true, enumerable: true, writable: true }), value: replacement };
+      installedChat.set(key, expected);
+      Object.defineProperty(container, key, expected);
+    }
   } catch (error) {
     active = false;
-    clearDecorations(); restoreChatMethods();
+    reportCleanup({ kind: "attachment" }, combineCleanup([clearDecorations(), restoreChatMethods()]));
     throw error;
   }
   return Object.assign(() => {
     active = false;
-    clearDecorations(); restoreChatMethods();
+    reportCleanup({ kind: "attachment" }, combineCleanup([clearDecorations(), restoreChatMethods()]));
   }, {
     targets: (): readonly DisclosureTarget[] => {
       const visible: DisclosureTarget[] = [];
