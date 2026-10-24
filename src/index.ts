@@ -70,6 +70,12 @@ export default function transcriptUi(pi: ExtensionAPI): void {
             getTheme: () => ctx.ui.theme, requestRender: () => tui.requestRender(), rules: groupingRules(settings), displayLimits: settings.display,
             resolveIntent: (id, args) => settings.intent.enabled ? intents.resolve(id, args, settings.intent.maxLength) : undefined,
             onUnsupported: (name, error) => ctx.ui.notify(`transcript-ui kept ${name} native: ${String(error)}`, "warning"),
+            onCleanupIncomplete: (source, failure) => {
+              const context = source.kind === "tool" ? source.toolName : "attachment";
+              const first = failure.failures[0]!;
+              const issueCount = failure.failures.length;
+              ctx.ui.notify(`transcript-ui cleanup incomplete (${context}, ${issueCount} issue${issueCount === 1 ? "" : "s"}): ${first.slot}: ${String(first.error)}`, "error");
+            },
           });
           tui.requestRender();
         } catch (error) { ctx.ui.notify(`transcript-ui attachment failed: ${String(error)}`, "error"); }

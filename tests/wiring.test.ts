@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { attachTranscriptPresentation, type NativeToolComponent } from "../src/wiring.js";
 import { defaultSettings, groupingRules } from "../src/settings.js";
+import { withAccessorChildren } from "./fixtures/native-children.js";
 
 initTheme();
 const theme = { bold: (s: string) => s, fg: (_style: string, s: string) => s };
@@ -31,24 +32,30 @@ function definition(shell: "default" | "self" = "default"): ToolDefinition {
     },
   };
 }
-function component(def: ToolDefinition | undefined, id = "call", args: unknown = { displaySummary: "Check interoperability" }): ToolExecutionComponent {
-  return new ToolExecutionComponent(def?.name ?? "unknown", id, args,
-    { showImages: true }, def, { requestRender: vi.fn() } as never, "/tmp");
-}
-function setup(def: ToolDefinition | null = definition(), args?: unknown) {
-  const baseline = component(def ?? undefined, "baseline", args);
-  const decorated = component(def ?? undefined, "decorated", args);
-  const chat = new Container(); chat.addChild(decorated);
-  const root = new Container(); root.addChild(chat);
-  const dispose = attachTranscriptPresentation(root, { getTheme: () => theme, requestRender: vi.fn() });
-  const each = (fn: (c: ToolExecutionComponent) => void) => { fn(baseline); fn(decorated); };
-  const compare = (width = 80) => {
-    expect(decorated.render(width).slice(2)).toEqual(baseline.render(width));
-  };
-  return { baseline, decorated, chat, root, dispose, each, compare };
+function nativeFixture(mode: "data" | "accessor") {
+  function component(def: ToolDefinition | undefined, id = "call", args: unknown = { displaySummary: "Check interoperability" }): ToolExecutionComponent {
+    const tool = new ToolExecutionComponent(def?.name ?? "unknown", id, args,
+      { showImages: true }, def, { requestRender: vi.fn() } as never, "/tmp");
+    if (mode === "accessor") withAccessorChildren(tool);
+    return tool;
+  }
+  function setup(def: ToolDefinition | null = definition(), args?: unknown) {
+    const baseline = component(def ?? undefined, "baseline", args);
+    const decorated = component(def ?? undefined, "decorated", args);
+    const chat = new Container(); chat.addChild(decorated);
+    const root = new Container(); root.addChild(chat);
+    const dispose = attachTranscriptPresentation(root, { getTheme: () => theme, requestRender: vi.fn() });
+    const each = (fn: (c: ToolExecutionComponent) => void) => { fn(baseline); fn(decorated); };
+    const compare = (width = 80) => {
+      expect(decorated.render(width).slice(2)).toEqual(baseline.render(width));
+    };
+    return { baseline, decorated, chat, root, dispose, each, compare };
+  }
+  return { component, setup };
 }
 
-describe("actual ToolExecutionComponent differential rendering", () => {
+describe.each(["data", "accessor"] as const)("%s children: actual ToolExecutionComponent differential rendering", (mode) => {
+  const { component, setup } = nativeFixture(mode);
   it("uses family labels for arbitrary or mixed operations instead of inventing file work", () => {
     for (const [names, family, label] of [
       [["mcp__any", "mcp__other"], "exploration", "Explored"],
@@ -177,7 +184,8 @@ describe("actual ToolExecutionComponent differential rendering", () => {
   });
 });
 
-describe("actual transcript attachment and grouping", () => {
+describe.each(["data", "accessor"] as const)("%s children: actual transcript attachment and grouping", (mode) => {
+  const { component } = nativeFixture(mode);
   function grouped() {
     const chat = new Container(); const root = new Container(); root.addChild(chat);
     const dispose = attachTranscriptPresentation(root, { getTheme: () => theme, requestRender: vi.fn(),
@@ -261,11 +269,12 @@ describe("actual transcript attachment and grouping", () => {
     dispose();
   });
   it("restores inherited methods and actual native children after teardown", () => {
-    const h = setup();
+    const h = nativeFixture(mode).setup();
     h.each((c) => c.updateResult(output));
     h.dispose(); h.dispose();
     expect(Object.hasOwn(h.decorated, "render")).toBe(false);
-    expect(Object.getOwnPropertyDescriptor(h.decorated, "children")?.value).toBe(h.decorated.children);
+    if (mode === "data") expect(Object.getOwnPropertyDescriptor(h.decorated, "children")?.value).toBe(h.decorated.children);
+    else expect(Object.getOwnPropertyDescriptor(h.decorated, "children")).toBeUndefined();
     expect(Object.hasOwn(h.chat, "addChild")).toBe(false);
     expect(h.decorated.render(80)).toEqual(h.baseline.render(80));
   });

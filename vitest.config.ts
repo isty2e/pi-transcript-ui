@@ -5,6 +5,8 @@ import { configDefaults, defineConfig } from "vitest/config";
 import { piCapabilities } from "./tests/fixtures/pi-capabilities.js";
 
 const compatibilityCases = [
+  "tests/wiring-lifecycle.test.ts",
+  "tests/integration/cleanup-notifications.test.ts",
   "tests/fixtures/pi-host.test.ts",
   "tests/integration/read-body.test.ts",
   "tests/integration/file-mutation.test.ts",
