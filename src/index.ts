@@ -73,7 +73,8 @@ export default function transcriptUi(pi: ExtensionAPI): void {
             onCleanupIncomplete: (source, failure) => {
               const context = source.kind === "tool" ? source.toolName : "attachment";
               const first = failure.failures[0]!;
-              ctx.ui.notify(`transcript-ui cleanup incomplete (${context}, ${failure.failures.length} issues): ${first.slot}: ${String(first.error)}`, "error");
+              const issueCount = failure.failures.length;
+              ctx.ui.notify(`transcript-ui cleanup incomplete (${context}, ${issueCount} issue${issueCount === 1 ? "" : "s"}): ${first.slot}: ${String(first.error)}`, "error");
             },
           });
           tui.requestRender();

@@ -50,11 +50,16 @@ it("routes dynamic rollback/removal and inactive shutdown cleanup to the same UI
     expect(() => h.chat.removeChild(removed.proxy)).not.toThrow();
     const remaining = restorationFault(h.makeTool("shutdown"));
     h.chat.addChild(remaining.proxy); remaining.arm();
+    const alsoRemaining = restorationFault(h.makeTool("shutdown-second"));
+    h.chat.addChild(alsoRemaining.proxy); alsoRemaining.arm();
     expect(() => h.emit("session_shutdown")).not.toThrow();
 
     const diagnostics = h.ui.notify.mock.calls.filter(([message]) => message.startsWith("transcript-ui cleanup incomplete"));
     expect(diagnostics).toHaveLength(3);
     expect(diagnostics.every(([, level]) => level === "error")).toBe(true);
+    expect(diagnostics[0]![0]).toMatch(/\b1 issue\b/);
+    expect(diagnostics[1]![0]).toMatch(/\b1 issue\b/);
+    expect(diagnostics[2]![0]).toMatch(/\b2 issues\b/);
     expect(h.ui.notify.mock.calls.filter(([, level]) => level === "warning")).toEqual([]);
     expect(h.ui.setWidget.mock.calls.at(-1)?.[1]).toBeUndefined();
   } finally { await h.dispose(); }
