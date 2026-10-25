@@ -24,7 +24,8 @@ export interface ItemToolkit {
   row(read: (width?: number) => string): Component & { readonly text: string };
   format(parts: LineParts, error?: boolean): string;
   describe(record: ActivityRecord, matched: MatchedTerminal | undefined, parent: NativeToolComponent): ItemDescription;
-  group(id: string, classification: ToolClassification, members: () => readonly GroupMemberSummary[], parent: () => DisclosureTarget): GroupRow;
+  group(id: string, classification: ToolClassification, members: () => readonly GroupMemberSummary[], parent: () => DisclosureTarget,
+    indent: () => number): GroupRow;
   requestRender(): void;
 }
 export interface SourceProjection {
@@ -65,9 +66,10 @@ class ItemRow implements Component, DisclosureTarget {
   private makeHeader(): Component & { readonly text: string } {
     const scope = this.scope;
     return scope.toolkit.row(width => {
-      const parts = this.description?.line(width === undefined ? undefined : Math.max(0, width - (this.group ? 2 : 0)))
+      const indent = scope.headingIndent + (this.group ? 2 : 0);
+      const parts = this.description?.line(width === undefined ? undefined : Math.max(0, width - indent))
         ?? { marker: "", action: "Output", rest: "" };
-      return `${this.group ? "  " : ""}${scope.toolkit.format({ ...parts, marker: this.expanded ? "▾" : "▸" },
+      return `${" ".repeat(indent)}${scope.toolkit.format({ ...parts, marker: this.expanded ? "▾" : "▸" },
         this.description?.member.isError ?? scope.binding.facts.outcome?.isError === true)}`;
     });
   }
@@ -185,6 +187,7 @@ export class CodemodeScope implements Component, SourceProjection {
   get key(): string { return `${this.prefix}:${this.epoch}`; }
   get original(): NativeToolComponent { return this.binding.parent; }
   get isAttached(): boolean { return this.attached; }
+  get headingIndent(): number { return (this.sourceTarget.parent ? 2 : 0) + (this.binding.runtime.requested() === "items" ? 2 : 0); }
   get outcome(): ParentOutcome | undefined { return this.binding.facts.outcome; }
   get summaryRevision(): number { return this.revision; }
   summary(phase: ToolPhase): CodemodeSummary {
@@ -196,7 +199,7 @@ export class CodemodeScope implements Component, SourceProjection {
       const value = this.binding.runtime.appearance();
       appearance = `${value.showImages}:${value.imageWidthCells}:${value.outputPad}`;
     } catch { /* A missing host resolves to original rendering. */ }
-    return `${this.sourceVisible()}:${this.sourceTarget.expanded}:${appearance}:${[...this.groups.values()].map(group => group.expanded).join(",")}`;
+    return `${this.binding.runtime.requested()}:${this.headingIndent}:${this.sourceVisible()}:${this.sourceTarget.expanded}:${appearance}:${[...this.groups.values()].map(group => group.expanded).join(",")}`;
   }
   get content(): string { return `codemode:${this.revision}:${this.binding.facts.revision}:${this.items}:${this.layoutState()}`; }
   get items(): boolean {
@@ -212,7 +215,7 @@ export class CodemodeScope implements Component, SourceProjection {
     this.admitted ||= available;
     return available;
   }
-  get fallback(): boolean { return this.binding.runtime.requested() === "items" && this.binding.facts.records !== undefined && !this.items; }
+  get fallback(): boolean { return this.binding.runtime.requested() !== "native" && this.binding.facts.records !== undefined && !this.items; }
   reattach(target: DisclosureTarget, toolkit: ItemToolkit, visible: () => boolean): void {
     this.sourceTarget = target; this.toolkit = toolkit; this.sourceVisible = visible; this.attached = true;
     if (this.binding.runtime.requested() === "native") this.wasNative = true;
@@ -258,7 +261,8 @@ export class CodemodeScope implements Component, SourceProjection {
         this.groupMembers.set(id, members);
         let group = this.groups.get(id);
         if (!group) {
-          group = this.toolkit.group(id, classification, () => (this.groupMembers.get(id) ?? []).map(row => row.summary), () => this.sourceTarget);
+          group = this.toolkit.group(id, classification, () => (this.groupMembers.get(id) ?? []).map(row => row.summary),
+            () => this.sourceTarget, () => this.headingIndent);
           if (members.some(row => row.expanded && (!previous.get(row) || previous.get(row)!.expanded))) group.setExpanded(true);
           this.groups.set(id, group);
         }

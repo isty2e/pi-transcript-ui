@@ -40,7 +40,7 @@ export interface DisplayLimits {
   intentMaxWidth: number;
   commandPreview: CommandPreviewMode;
   toolDuration: boolean;
-  codemode: "items" | "native";
+  codemode: "items" | "flat" | "native";
 }
 export const DEFAULT_DISPLAY_LIMITS: Readonly<DisplayLimits> = { rowMaxWidth: 120, commandMaxWidth: 120, intentMaxWidth: 48, commandPreview: "compact", toolDuration: true, codemode: "items" };
 export interface RowLayout {

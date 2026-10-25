@@ -8,6 +8,7 @@ import { Container, MouseRegion, Text, stripTerminalSequences, type Component, t
 import { attachTranscriptPresentation, type NativeToolComponent } from "../../../src/wiring.js";
 import { CodemodeRuntime } from "../../../src/codemode/pi.js";
 import { CodemodePresentation } from "../../../src/codemode/view.js";
+import type { DisplayLimits } from "../../../src/display.js";
 
 interface ModeFixtureAccess {
   ui: Container;
@@ -27,7 +28,7 @@ export default function codemodeFixture(pi: ExtensionAPI) {
     let session: Awaited<ReturnType<typeof createAgentSessionFromServices>>["session"] | undefined;
     let runtime: CodemodeRuntime | undefined, presentation: CodemodePresentation | undefined;
     let mode: InteractiveMode | undefined, detach: ReturnType<typeof attachTranscriptPresentation> | undefined;
-    let layout: "items" | "native" = "items", ownSource = false, executed = 0, requests = 0;
+    let layout: DisplayLimits["codemode"] = "items", ownSource = false, executed = 0, requests = 0;
     let terminalStarts = 0, terminalWrites = 0, invalidateChild: (() => void) | undefined;
 
     try {
@@ -101,6 +102,7 @@ export default function codemodeFixture(pi: ExtensionAPI) {
 
       for (const selected of [false, true]) {
         ownSource = selected;
+        if (selected) { detach(); layout = "flat"; detach = attach(); }
         const id = selected ? "selected" : "native";
         await emit({ type: "tool_execution_start", toolName: "codemode", toolCallId: id, args: { code: "return 'SOURCE-CODE'" } });
         const parent = access.chatContainer.children[0] as unknown as NativeToolComponent;
@@ -141,6 +143,15 @@ export default function codemodeFixture(pi: ExtensionAPI) {
         assert.equal(detach.targets().length, 3);
         assert.ok(restored.includes("SOURCE-CODE") && restored.includes("CHILD BODY") && restored.includes("SCRIPT OUTPUT"));
         assert.ok(!restored.includes("ORIGINAL BODY"));
+        const bodies = () => detach!.targets().slice(1).map(target =>
+          (target as unknown as { children: Component[] }).children[1]!.render(100));
+        const indentedBodies = bodies(), sourceLines = currentSource().render(100);
+        assert.equal(detach.targets()[1]!.label.match(/^ */)![0].length, 2);
+        detach(); layout = "flat"; detach = attach(); render();
+        assert.equal(detach.targets()[1]!.label.match(/^ */)![0].length, 0);
+        assert.deepEqual(bodies(), indentedBodies); assert.deepEqual(currentSource().render(100), sourceLines);
+        detach(); layout = "items"; detach = attach(); render();
+        assert.deepEqual(bodies(), indentedBodies);
 
         const late = invalidateChild;
         assert.ok(late, "A native completed child body must have been constructed");
