@@ -16,8 +16,12 @@ export class ToolNavigation {
   view(): { targets: readonly DisclosureTarget[]; selected: DisclosureTarget | undefined; index: number } {
     const targets = this.getTargets();
     if (!this.selected || !targets.includes(this.selected)) {
-      this.selected = this.selected?.parent && targets.includes(this.selected.parent)
-        ? this.selected.parent : targets.at(-1);
+      let ancestor = this.selected?.parent;
+      const visited = new Set<DisclosureTarget>();
+      while (ancestor && !targets.includes(ancestor) && !visited.has(ancestor)) {
+        visited.add(ancestor); ancestor = ancestor.parent;
+      }
+      this.selected = ancestor && targets.includes(ancestor) ? ancestor : targets.at(-1);
     }
     return { targets, selected: this.selected, index: this.selected ? targets.indexOf(this.selected) : -1 };
   }

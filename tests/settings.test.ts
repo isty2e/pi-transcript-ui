@@ -48,6 +48,22 @@ it.each([undefined, null, "false", "true", 0, 1, {}, []])("rejects a non-boolean
   const settings = defaultSettings();
   expect(() => parseSettings({ ...settings, display: { ...settings.display, toolDuration } })).toThrow();
 });
+it("defaults missing codemode to items without rewriting old bytes, then persists explicit native", async () => {
+  const store = await file();
+  const { codemode: _omitted, ...display } = defaultSettings().display;
+  const bytes = JSON.stringify({ ...defaultSettings(), display });
+  await writeFile(store.path, bytes);
+  const loaded = await store.load();
+  expect(loaded.settings.display.codemode).toBe("items");
+  expect(await readFile(store.path, "utf8")).toBe(bytes);
+
+  loaded.settings.display.codemode = "native";
+  await store.save(loaded.settings, loaded.original);
+  expect((await store.load()).settings.display.codemode).toBe("native");
+});
+it.each([undefined, null, true, 0, {}, [], "original", "auto"])("rejects an invalid codemode setting: %j", codemode => {
+  expect(() => parseSettings({ ...defaultSettings(), display: { codemode } })).toThrow();
+});
 it("saves explicit custom auto-group exclusions, reloads them and cancels without writes", async () => {
   const store = await file();
   const ui = { select: vi.fn().mockResolvedValueOnce("Grouping").mockResolvedValueOnce("Standalone tools — exclude auto-grouping (0)").mockResolvedValueOnce("Back").mockResolvedValueOnce("Cancel"), editor: vi.fn().mockResolvedValue("custom_write"), input: vi.fn(), notify: vi.fn() };

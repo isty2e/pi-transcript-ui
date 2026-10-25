@@ -6,13 +6,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   createAgentSession, DefaultResourceLoader, getPackageDir, initTheme, ModelRuntime, SessionManager, SettingsManager,
-  ToolExecutionComponent, VERSION, type ExtensionFactory, type CodemodeToolDetails,
+  ToolExecutionComponent, InteractiveMode, VERSION, type ExtensionFactory, type CodemodeToolDetails, type ExtensionContext, type ToolRenderers,
 } from "@earendil-works/pi-coding-agent";
 import { Container, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import transcriptUi from "../../src/index.js";
 import { attachTranscriptPresentation } from "../../src/wiring.js";
 import { theme } from "../fixtures/pi-theme.js";
 import { piCapabilities } from "../fixtures/pi-capabilities.js";
+import { CodemodeRuntime } from "../../src/codemode/pi.js";
+import { CodemodePresentation } from "../../src/codemode/view.js";
 
 const { createCodemodeExtension } = await import(join(getPackageDir(), "dist/extensions/codemode/index.js")) as {
   createCodemodeExtension: (options: { models: boolean }) => ExtensionFactory;
@@ -33,6 +35,7 @@ it("summarizes actual host execution, progress and persisted results without rep
   ];
   let requests = 0;
   const executed: string[] = [], errors: unknown[] = [];
+  let itemsRuntime: CodemodeRuntime | undefined;
   const server = createServer(async (request, response) => {
     for await (const _chunk of request) { /* Drain the local fixture request. */ }
     const index = requests++;
@@ -52,6 +55,7 @@ it("summarizes actual host execution, progress and persisted results without rep
     baseUrl: `http://127.0.0.1:${address.port}/v1`, reasoning: false, input: ["text" as const],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 100000, maxTokens: 1000 };
   const fixture: ExtensionFactory = pi => {
+    itemsRuntime = new CodemodeRuntime(pi, () => "items");
     pi.registerProvider(model.provider, { baseUrl: model.baseUrl, api: model.api, apiKey: "local-fixture-not-a-secret", models: [model] });
     for (const name of ["fixture_ok", "fixture_fail"]) {
       pi.registerTool({ name, label: name, description: "Pure codemode test tool", exposure: "codemode",
@@ -74,6 +78,10 @@ it("summarizes actual host execution, progress and persisted results without rep
   let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
   let dispose: ReturnType<typeof attach> | undefined;
   let component: ToolExecutionComponent | undefined;
+  const itemsRoot = new Container(), itemsChat = new Container(); itemsRoot.addChild(itemsChat);
+  let itemsParent: ToolExecutionComponent | undefined;
+  let itemsPresentation: CodemodePresentation | undefined;
+  let itemsDetach: ReturnType<typeof attach> | undefined;
   let args: unknown;
   const progress: { calls: CodemodeToolDetails["calls"]; row: string }[] = [];
   const settledRows: string[] = [];
@@ -88,6 +96,19 @@ it("summarizes actual host execution, progress and persisted results without rep
       resourceLoader: loader, settingsManager, tools: ["codemode", "fixture_ok", "fixture_fail"],
       sessionManager: SessionManager.create(directory, join(directory, "sessions")) }));
     await session.bindExtensions({ mode: "json", onError: error => errors.push(error) });
+    itemsRuntime!.start({ mode: "tui", sessionManager: session.sessionManager } as unknown as ExtensionContext);
+    itemsRuntime!.setRoot(itemsRoot);
+    const mode = {
+      ui: itemsRoot, sessionManager: session.sessionManager, session, settingsManager, outputPad: 0, toolOutputExpanded: true,
+      getRegisteredToolDefinition(name: string): ToolRenderers | undefined {
+        const lookup = Reflect.get(InteractiveMode.prototype, "getRegisteredToolDefinition") as (this: unknown, name: string) => ToolRenderers | undefined;
+        return lookup.call(this, name);
+      },
+    };
+    const itemsDefinition = mode.getRegisteredToolDefinition("codemode");
+    itemsPresentation = new CodemodePresentation(itemsRuntime!);
+    itemsDetach = attachTranscriptPresentation(itemsRoot, { getTheme: () => theme, requestRender: vi.fn(), codemode: itemsPresentation,
+      resolveParameters: name => itemsRuntime!.parameters(name) });
     const definition = session.getToolDefinition("codemode")!;
     const execute = definition.execute;
     session.subscribe(event => {
@@ -96,14 +117,19 @@ it("summarizes actual host execution, progress and persisted results without rep
         component = new ToolExecutionComponent("codemode", event.toolCallId, args, {}, definition,
           { requestRender() {} } as never, directory);
         component.markExecutionStarted();
+        itemsParent = new ToolExecutionComponent("codemode", event.toolCallId, args, { outputPad: 0 }, itemsDefinition,
+          { requestRender() {} } as never, directory);
+        itemsParent.setExpanded(true); itemsParent.markExecutionStarted(); itemsChat.addChild(itemsParent);
         chat.addChild(component);
         dispose = attach();
       } else if (event.type === "tool_execution_update" && event.toolName === "codemode") {
         const partial = event.partialResult as { content: { type: string; text?: string }[]; details: CodemodeToolDetails };
         component!.updateResult({ ...partial, isError: false }, true);
+        itemsParent!.updateResult({ ...partial, isError: false }, true);
         progress.push({ calls: structuredClone(partial.details.calls), row: row() });
       } else if (event.type === "tool_execution_end" && event.toolName === "codemode") {
         component!.updateResult({ ...event.result, isError: event.isError, durationMs: event.durationMs });
+        itemsParent!.updateResult({ ...event.result, isError: event.isError, durationMs: event.durationMs });
       }
     });
 
@@ -117,6 +143,14 @@ it("summarizes actual host execution, progress and persisted results without rep
       expect(dispose!.targets()).toHaveLength(1);
       expect(dispose!.targets()[0]!.parent).toBeUndefined();
       const label = row();
+      const items = stripTerminalSequences(itemsChat.render(120).join("\n"));
+      if (scenario.statuses) {
+        expect(items).toContain("Code source");
+        expect(itemsDetach!.targets().length).toBeGreaterThanOrEqual(3);
+        expect(items).not.toContain("Detailed result unavailable");
+        itemsParent!.setExpanded(false);
+        expect(stripTerminalSequences(itemsChat.render(120).join("\n"))).toContain("OK");
+      } else expect(itemsDetach!.targets()).toHaveLength(1);
       expect(label).not.toContain("lines)");
       expect(label.includes("— error")).toBe(scenario.isError);
       if (scenario.statuses) {
@@ -158,6 +192,7 @@ it("summarizes actual host execution, progress and persisted results without rep
         component!.setExpanded(false);
       }
       chat.clear();
+      itemsChat.clear();
     }
 
     const reloaded = SessionManager.open(session.sessionManager.getSessionFile()!).buildSessionContext().messages
@@ -179,6 +214,7 @@ it("summarizes actual host execution, progress and persisted results without rep
     expect(errors).toEqual([]);
   } finally {
     dispose?.();
+    itemsDetach?.(); itemsPresentation?.dispose(); itemsRuntime?.shutdown();
     session?.dispose();
     server.closeAllConnections();
     await new Promise<void>(resolve => server.close(() => resolve()));

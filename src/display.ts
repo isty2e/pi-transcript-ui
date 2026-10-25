@@ -9,7 +9,7 @@ import { fileMutationPath, type FileMutation } from "./file-mutation.js";
 import { commandPreview, type CommandPreviewMode } from "./command-preview.js";
 import { pathPreview } from "./path-preview.js";
 import type { PatchRequest } from "./patch-request.js";
-import type { CodemodeSummary } from "./codemode-summary.js";
+import type { CodemodeSummary } from "./codemode/summary.js";
 import type { ShellSessionSummary } from "./shell-session-summary.js";
 import type { ToolPhase } from "./tool-phase.js";
 
@@ -40,8 +40,9 @@ export interface DisplayLimits {
   intentMaxWidth: number;
   commandPreview: CommandPreviewMode;
   toolDuration: boolean;
+  codemode: "items" | "native";
 }
-export const DEFAULT_DISPLAY_LIMITS: Readonly<DisplayLimits> = { rowMaxWidth: 120, commandMaxWidth: 120, intentMaxWidth: 48, commandPreview: "compact", toolDuration: true };
+export const DEFAULT_DISPLAY_LIMITS: Readonly<DisplayLimits> = { rowMaxWidth: 120, commandMaxWidth: 120, intentMaxWidth: 48, commandPreview: "compact", toolDuration: true, codemode: "items" };
 export interface RowLayout {
   limits?: Readonly<Partial<DisplayLimits>>;
   width?: number;
@@ -276,6 +277,16 @@ export function runningLine(
 ): LineParts {
   const outcome = display?.target.kind === "patch-request" ? ` ${requestedPatchText(display.target.request.delta)}` : "";
   return summaryParts(toolName, display, outcome, phase, { intent, layout });
+}
+
+/** An opaque producer preview is not a tool request or an output count. */
+export function recordedActivityLine(name: string, preview: string | undefined, status: "running" | "ok" | "error" | "cancelled",
+  layout: RowLayout, durationMs?: number): LineParts {
+  const actions: Record<string, ToolDisplay["action"]> = { read: "Read", grep: "Search", find: "Find", ls: "List", edit: "Edit", write: "Write", bash: "Run", powershell: "Run" };
+  const action = actions[name];
+  const display: ToolDisplay | null = action ? { action, target: { kind: "none" } } : null;
+  const outcome = `${preview ? ` ${stripTerminalSequences(preview)}` : ""}${status === "error" ? " — error" : status === "cancelled" ? " — cancelled" : ""}`;
+  return summaryParts(name, display, outcome, status === "running" ? "running" : "settled", { layout, durationMs });
 }
 
 export function shellSessionLine(summary: ShellSessionSummary, isError: boolean, phase: ToolPhase,

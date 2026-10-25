@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { getPackageDir } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { toolDurationMs } from "../src/tool-duration.js";
-import { codemodeSummary } from "../src/codemode-summary.js";
+import { codemodeSummary } from "../src/codemode/summary.js";
 import { codemodeLine, displayFor, joinLine, settledLine, shellSessionLine } from "../src/display.js";
 import { NO_SUMMARY_METRICS } from "../src/tool-metrics.js";
 import { styleLine } from "../src/wiring.js";

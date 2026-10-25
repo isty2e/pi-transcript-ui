@@ -6,7 +6,7 @@ Run `/transcript-ui settings` inside Pi and choose a category:
 
 - **Grouping** — Exploration, Mutation and Standalone tool lists.
 - **Intent** — Purpose text, language and generation length.
-- **Display** — Tool duration, command preview mode and summary widths.
+- **Display** — Codemode presentation, tool duration, command preview mode and summary widths.
 
 Changes stay in one draft as you move between categories. Choose **Back** or press Escape inside a category to return to the main settings menu. Cancelling an individual field editor or chooser returns to its category without changing that option.
 
@@ -80,6 +80,16 @@ This option does not alter group headers or the original expanded rendering. Nat
 
 PowerShell uses the raw first-line form in either mode. Neither mode changes execution or expanded output.
 
+## Codemode
+
+| Menu option | JSON key | Default | Values |
+| --- | --- | --- | --- |
+| Codemode | `display.codemode` | Independent items (`"items"`) | Independent items (`"items"`) / Original (`"native"`) |
+
+Independent items gives the source, recorded activities and final script Output separate controls. Original keeps the aggregate parent and the active renderer's original body; it does not force Pi's built-in renderer. Neither choice sets a code-visibility default or changes execution. See [activity/body availability and fallback](usage.md#codemode).
+
+Saved mode changes apply immediately. Existing source-renderer state is retained while its actual parent component survives; missing child results are not recovered by switching modes. Standalone grouping exclusions do not select Original mode. Older releases reject the new JSON key; remove `display.codemode` when reverting to one of those releases.
+
 ## Settings file
 
 You do not need to edit JSON to use the settings menu. For manual editing, the default file is:
@@ -112,7 +122,8 @@ The file is created only when you save. After editing it outside Pi, run `/reloa
     "commandMaxWidth": 120,
     "intentMaxWidth": 48,
     "commandPreview": "compact",
-    "toolDuration": true
+    "toolDuration": true,
+    "codemode": "items"
   }
 }
 ```

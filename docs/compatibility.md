@@ -18,7 +18,7 @@ The SDK-based suites use matching versions of their Pi runtime dependencies, inc
 
 Test admission follows release capabilities: structured prompt sections from 0.86.0, native codemode from 0.99.0, recorded tool duration from 1.1.0 and trigger-object prompt hooks from 1.2.0. Only the representative hosts listed above are exercised. These component, session and compositor-fixture tests do not establish complete interactive terminal sessions or compatibility with every release in those ranges.
 
-[Codemode coverage](usage.md#codemode) includes real sandbox execution, partial updates, saved results and native expanded-body rendering. The extension does not add codemode to older hosts.
+[Codemode coverage](usage.md#codemode) includes real sandbox execution, partial updates, saved results and native expanded-body rendering. Independent items additionally use the primary host's native components and renderer dispatch, with terminal-only body association, original-parent fallback and compositor-cache/control fixtures. Those item-specific checks are not a blanket older-host or full terminal claim. The extension does not add codemode to older hosts.
 
 [Shell-session summaries](usage.md#shell-sessions) use provider-shaped requests and receipts with real native tool components. These tests do not execute the external providers or run the presentation extension through Pi's extension loader.
 
@@ -60,7 +60,9 @@ Unsupported UI components keep native presentation and produce a diagnostic rath
 
 Native tool components can expose their child collection as an own array or through inherited read/write accessors. Existing own accessor overrides are left untouched rather than stacked with another presentation wrapper. Cleanup restores only properties still owned by this extension; foreign replacements are preserved.
 
-Summaries do not replace tool execution, permissions or expanded output. Command previews and line counts are not a security review, an execution trace or a complete filesystem diff.
+Codemode's independent items use normal tool renderer dispatch; no renderer extension is required. Renderer extensions keep their code defaults and local result controls. Codemode composition expects source/control in the call slot and activity/output in the result slot; arbitrary opaque overrides that mix these roles are not automatically certified. Original mode preserves their whole selected renderer. Ordinary nested tools do not have this slot restriction: their complete native bodies are retained, including diffs in a call renderer and images managed outside a text result renderer.
+
+Summaries do not replace tool execution or permissions. Command previews and line counts are not a security review, an execution trace or a complete filesystem diff.
 
 ## Intent prompt composition
 

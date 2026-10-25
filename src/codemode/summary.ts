@@ -1,5 +1,6 @@
-import { isRecord } from "./intent.js";
-import type { ToolPhase } from "./tool-phase.js";
+import { isRecord } from "../intent.js";
+import type { ToolPhase } from "../tool-phase.js";
+import { activityRecords, type ActivityRecord } from "./model.js";
 
 export interface CodemodeSummary {
   readonly phase: ToolPhase;
@@ -13,13 +14,12 @@ export interface CodemodeSummary {
   }> | undefined;
 }
 
-function nestedCalls(value: unknown): CodemodeSummary["calls"] {
-  if (!Array.isArray(value)) return undefined;
+function nestedCalls(records: readonly ActivityRecord[] | undefined): CodemodeSummary["calls"] {
+  if (!records) return undefined;
   const names = new Map<string, number>();
   let running = 0, errors = 0, cancelled = 0, moreNames = false;
 
-  for (const call of value) {
-    if (!isRecord(call) || typeof call.name !== "string" || !call.name) return undefined;
+  for (const call of records) {
     switch (call.status) {
       case "running": running++; break;
       case "error": errors++; break;
@@ -33,8 +33,12 @@ function nestedCalls(value: unknown): CodemodeSummary["calls"] {
     else moreNames = true;
   }
 
-  return { total: value.length, running, errors, cancelled,
+  return { total: records.length, running, errors, cancelled,
     names: [...names].map(([name, count]) => ({ name, count })), moreNames };
+}
+
+export function summarizeActivity(records: readonly ActivityRecord[] | undefined, phase: ToolPhase): CodemodeSummary {
+  return { phase, calls: nestedCalls(records) };
 }
 
 /** Project Pi's recorded codemode facts without interpreting the script or result text. */
@@ -47,6 +51,6 @@ export function codemodeSummary({ toolName, args, result, phase }: {
   try {
     if (toolName !== "codemode" || !isRecord(args) || typeof args.code !== "string") return undefined;
     const details = isRecord(result) && isRecord(result.details) ? result.details : undefined;
-    return { phase, calls: nestedCalls(details?.calls) };
+    return summarizeActivity(activityRecords(details?.calls), phase);
   } catch { return undefined; }
 }

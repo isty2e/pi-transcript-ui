@@ -151,7 +151,28 @@ This changes presentation only; full argument validation remains with the provid
 
 ### Codemode
 
-Pi's native `codemode` tool keeps one parent row, with a compact summary of its recorded activity:
+Pi's native `codemode` uses **Independent items** by default:
+
+```text
+▸ Code source read ×2, bash (3 nested calls) (1.2s)
+▸ Read 2 calls
+▸ Ran npm test (0.4s)
+▸ Output
+```
+
+Source, each activity and script Output have separate disclosure and navigation targets. Closing the source row does not close the other items. Adjacent eligible activity can group within that one codemode call, using the normal grouping settings. Metadata-only groups count calls rather than inventing file or output-line totals. The source row retains the parent's summary and purpose; it is not a new execution record. Groups of top-level calls still count actual codemode parents, not their activity items.
+
+Source expansion uses the selected renderer's current source component and code controls. A tool-rendering extension owns its code visibility/default and local result-expansion policy; Transcript UI does not add another code visibility setting. Without a renderer extension, Pi's normal renderers are used.
+
+Detailed child bodies require a start and terminal result observed in the current UI session, with an unambiguous match for the parent, tool name and actual call ID. Until then, opening an activity shows its recorded preview/status, not a reconstructed result. Saved history, cancelled placeholders, ambiguous active parents and reused completed parent IDs can therefore remain metadata-only. Identical previews are not used to match calls. Rich bodies are created only for completed calls and retain the whole selected native call/result rendering, including call-slot diffs and native images.
+
+Items follow Pi's recorded order, not inferred script or completion order. Output contains the script's supplied final content after its activity; it is not interleaved with guessed printing times. Equal child-return and script-output text is retained in both places. The native protocol header is omitted only when it is the exact separate first header block. Other text, errors, truncation notices and images are retained. Full-output files are not read automatically.
+
+Choose **Display → Codemode → Original** to keep the aggregate parent and its original selected renderer. Detected projection failures also return only that affected parent to original rendering, without resetting its code choice or disabling unrelated tools. Its existing outer disclosure flag is retained, so the original row may need to be expanded again. Unknown codemode overrides that mix execution results into their call/source component need Original mode; the composition contract is source/control in `renderCall` and results in `renderResult`.
+
+When Independent items is selected, a row ending in ` (original)` is using the original view because items are unavailable or a projection failed. For example, a saved codemode call may use this view when the codemode tool is not registered in the current session. The marker describes presentation availability, not execution failure. Explicitly choosing Original mode does not add it.
+
+The aggregate summary, used by Original mode and the source row, describes recorded activity:
 
 ```text
 Code…
@@ -168,7 +189,7 @@ While running, `so far` describes the current snapshot, not a planned total. Nes
 
 Missing or unusable call records omit the nested aggregate; they do not become zero. A recorded empty list shows `0 nested calls`. Codemode summaries do not show output-line totals; a group containing codemode also omits the group-wide output-line total. Codemode is standalone by default; explicit grouping settings still apply, and groups count native parents rather than their nested calls.
 
-This support uses Pi's named `codemode` contract with a normalized string `code` input and recorded result metadata. It is not a generic script or batch-tool adapter. The script is not parsed to predict calls or rewritten to add purpose text. Expanding retains the original active renderer, including the script, progress and output it supplies. Reconstructing separate child rows or missing child result bodies is outside this support.
+This support uses Pi's native code-request, activity-metadata and renderer contracts, not the tool name alone. It does not add codemode to older hosts or decompose arbitrary batch/converter tools. The script is not parsed to predict calls or rewritten to add purpose text. Missing child bodies and historical live observations are not restored. Execution, permissions and session records remain Pi's own. See the [codemode setting](settings.md#codemode).
 
 ### Failures and unavailable counts
 
@@ -188,7 +209,7 @@ Ran npm test (exit 0) (2m 5s) — Verify changes
 Ran code read ×2 (2 nested calls) (1.2s)
 ```
 
-Time comes only from Pi's final `durationMs`, available from Pi 1.1.0. Missing or unusable values, partial results and older saved calls without timing omit it; they do not imply zero. A recorded zero displays as `0.0s`. There is no separate live clock or fallback to provider receipt text. Shell-session time describes that `exec_command` or `write_stdin` invocation, not the lifetime of the process it may leave running. Groups do not sum member times, which can overlap.
+Time comes from Pi's recorded final `durationMs`, available for top-level calls from Pi 1.1.0. Codemode activities use their observed terminal duration, or their supplied recorded duration when only metadata is available. Missing or unusable values, partial results and older saved calls without timing omit it; they do not imply zero. A recorded zero displays as `0.0s`. There is no separate live clock or fallback to provider receipt text. Shell-session time describes that `exec_command` or `write_stdin` invocation, not the lifetime of the process it may leave running. Groups do not sum member times, which can overlap.
 
 Turn **Display → Tool duration** off to hide time on every individual summary, including codemode. The whole timing token is omitted if it cannot fit within the row's fixed content and width limit. The setting does not suppress timing supplied by the original expanded renderer. See the [setting](settings.md#tool-duration).
 

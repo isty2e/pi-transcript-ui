@@ -33,6 +33,7 @@ export async function editSettings(ui: SettingsUI, file: SettingsFile): Promise<
       { category: "Grouping", id: "standalone", label: `Standalone tools — exclude auto-grouping (${draft.grouping.standalone?.length ?? 0})` },
       { category: "Display", id: "command-preview", label: `Command preview: ${draft.display.commandPreview === "raw" ? "Raw" : "Compact"}` },
       { category: "Display", id: "tool-duration", label: `Tool duration: ${draft.display.toolDuration ? "on" : "off"}` },
+      { category: "Display", id: "codemode", label: `Codemode: ${draft.display.codemode === "items" ? "Independent items" : "Original"}` },
     ] as const satisfies readonly { category: SettingsCategory; id: string; label: string }[];
     const visibleOptions = options.filter(option => option.category === category);
     const chosen = await ui.select(`Transcript UI settings — ${category}`, [...visibleOptions.map(option => option.label), "Back"]);
@@ -93,6 +94,12 @@ export async function editSettings(ui: SettingsUI, file: SettingsFile): Promise<
         const mode = await ui.select("Command preview", ["Compact", "Raw"]);
         if (mode !== "Compact" && mode !== "Raw") continue;
         candidate.display.commandPreview = mode === "Raw" ? "raw" : "compact";
+        break;
+      }
+      case "codemode": {
+        const mode = await ui.select("Codemode presentation", ["Independent items", "Original"]);
+        if (mode !== "Independent items" && mode !== "Original") continue;
+        candidate.display.codemode = mode === "Original" ? "native" : "items";
         break;
       }
       default:
