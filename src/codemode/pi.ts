@@ -1,6 +1,7 @@
 import { InteractiveMode, type ExtensionAPI, type ExtensionContext, type ToolRenderers } from "@earendil-works/pi-coding-agent";
 import { Text, type Component } from "@earendil-works/pi-tui";
 import { isRecord } from "../intent.js";
+import type { DisplayLimits } from "../display.js";
 import type { NativeToolComponent } from "../wiring.js";
 import { CodemodeFacts, evidenceHandle, type EvidenceHandle, type MatchedTerminal, type ScriptOutput } from "./model.js";
 
@@ -81,13 +82,13 @@ export class CodemodeRuntime {
   private readonly payloads = new Map<EvidenceHandle, { owner: CodemodeFacts; payload: Payload }>();
   private releaseLookup: () => void;
 
-  constructor(private readonly pi: ExtensionAPI, readonly requested: () => "items" | "native") {
+  constructor(private readonly pi: ExtensionAPI, readonly requested: () => DisplayLimits["codemode"]) {
     this.releaseLookup = discover(mode => { this.captured = mode; });
     pi.on("tool_execution_start", event => {
       if (!this.active) return;
       if (event.parentToolCallId) {
         const execution = this.executions.get(event.parentToolCallId);
-        if (!execution || !execution.eligible || execution.closed || (this.requested() !== "items" && !execution.admitted)) return;
+        if (!execution || !execution.eligible || execution.closed || (this.requested() === "native" && !execution.admitted)) return;
         const handle = evidenceHandle();
         if (execution.facts.start(event.toolCallId, event.toolName, handle))
           this.payloads.set(handle, { owner: execution.facts, payload: { kind: "request", args: event.args } });

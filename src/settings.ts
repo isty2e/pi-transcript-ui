@@ -37,7 +37,7 @@ export function parseSettings(value: unknown): Settings {
   if (Object.hasOwn(value, "display")) {
     if (!isRecord(value.display) || Object.keys(value.display).some((key) => key !== "rowMaxWidth" && key !== "commandMaxWidth" && key !== "intentMaxWidth" && key !== "commandPreview" && key !== "toolDuration" && key !== "codemode")) throw new Error("Invalid display settings or unknown display key");
     if (Object.hasOwn(value.display, "codemode")) {
-      if (value.display.codemode !== "items" && value.display.codemode !== "native") throw new Error("Codemode must be items or native");
+      if (value.display.codemode !== "items" && value.display.codemode !== "flat" && value.display.codemode !== "native") throw new Error("Codemode must be items, flat or native");
       display.codemode = value.display.codemode;
     }
     if (Object.hasOwn(value.display, "commandPreview")) {

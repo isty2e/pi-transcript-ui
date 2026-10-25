@@ -625,8 +625,8 @@ export function attachTranscriptPresentation(root: { children: Component[] }, op
           content: result?.content, isError, metrics, ...context });
       } };
     },
-    group(id, classification, members, parent) {
-      const header: DisclosureGroup = new DisclosureGroup(id, () => styleLine(options.getTheme(), groupSummary({ classification,
+    group(id, classification, members, parent, indent) {
+      const header: DisclosureGroup = new DisclosureGroup(id, () => " ".repeat(indent()) + styleLine(options.getTheme(), groupSummary({ classification,
         members: members(), expanded: header.expanded })), () => members().some(member => member.phase !== "settled"),
       options.requestRender, options.displayLimits?.rowMaxWidth, parent);
       return header;

@@ -61,6 +61,14 @@ it("defaults missing codemode to items without rewriting old bytes, then persist
   await store.save(loaded.settings, loaded.original);
   expect((await store.load()).settings.display.codemode).toBe("native");
 });
+it("persists flat codemode independently of grouping and other display settings", async () => {
+  const store = await file();
+  const loaded = await store.load();
+  const settings = { ...loaded.settings, display: { ...loaded.settings.display, codemode: "flat" as const } };
+  await store.save(settings, loaded.original);
+  expect((await store.load()).settings).toEqual(settings);
+  expect(parseSettings(JSON.parse(await readFile(store.path, "utf8")))).toEqual(settings);
+});
 it.each([undefined, null, true, 0, {}, [], "original", "auto"])("rejects an invalid codemode setting: %j", codemode => {
   expect(() => parseSettings({ ...defaultSettings(), display: { codemode } })).toThrow();
 });

@@ -151,16 +151,18 @@ This changes presentation only; full argument validation remains with the provid
 
 ### Codemode
 
-Pi's native `codemode` uses **Independent items** by default:
+Pi's native `codemode` uses **Independent items (indented)** by default:
 
 ```text
 ▸ Code source read ×2, bash (3 nested calls) (1.2s)
-▸ Read 2 calls
-▸ Ran npm test (0.4s)
-▸ Output
+  ▸ Read 2 calls
+  ▸ Ran npm test (0.4s)
+  ▸ Output
 ```
 
 Source, each activity and script Output have separate disclosure and navigation targets. Closing the source row does not close the other items. Adjacent eligible activity can group within that one codemode call, using the normal grouping settings. Metadata-only groups count calls rather than inventing file or output-line totals. The source row retains the parent's summary and purpose; it is not a new execution record. Groups of top-level calls still count actual codemode parents, not their activity items.
+
+Only the generated activity/group/Output headings receive the codemode indentation. Expanded native output, source code, images and recorded details keep their original width and internal indentation. Choose **Display → Codemode → Independent items (flat)** to keep those headings at the source depth instead; Source and ordinary group/member indentation remain present.
 
 Source expansion uses the selected renderer's current source component and code controls. A tool-rendering extension owns its code visibility/default and local result-expansion policy; Transcript UI does not add another code visibility setting. Without a renderer extension, Pi's normal renderers are used.
 
@@ -170,7 +172,7 @@ Items follow Pi's recorded order, not inferred script or completion order. Outpu
 
 Choose **Display → Codemode → Original** to keep the aggregate parent and its original selected renderer. Detected projection failures also return only that affected parent to original rendering, without resetting its code choice or disabling unrelated tools. Its existing outer disclosure flag is retained, so the original row may need to be expanded again. Unknown codemode overrides that mix execution results into their call/source component need Original mode; the composition contract is source/control in `renderCall` and results in `renderResult`.
 
-When Independent items is selected, a row ending in ` (original)` is using the original view because items are unavailable or a projection failed. For example, a saved codemode call may use this view when the codemode tool is not registered in the current session. The marker describes presentation availability, not execution failure. Explicitly choosing Original mode does not add it.
+When either independent-item layout is selected, a row ending in ` (original)` is using the original view because items are unavailable or a projection failed. For example, a saved codemode call may use this view when the codemode tool is not registered in the current session. The marker describes presentation availability, not execution failure. Explicitly choosing Original mode does not add it.
 
 The aggregate summary, used by Original mode and the source row, describes recorded activity:
 

@@ -32,7 +32,8 @@ const cases: readonly {
   { category: "Grouping", label: "Standalone tools — exclude auto-grouping (0)", editor: "external", change: s => { s.grouping.standalone = ["external"]; } },
   { category: "Display", label: "Command preview: Compact", submenu: "Raw", change: s => { s.display.commandPreview = "raw"; } },
   { category: "Display", label: "Tool duration: on", change: s => { s.display.toolDuration = false; } },
-  { category: "Display", label: "Codemode: Independent items", submenu: "Original", change: s => { s.display.codemode = "native"; } },
+  { category: "Display", label: "Codemode: Independent items (indented)", submenu: "Original", change: s => { s.display.codemode = "native"; } },
+  { category: "Display", label: "Codemode: Independent items (indented)", submenu: "Independent items (flat)", change: s => { s.display.codemode = "flat"; } },
 ];
 
 it.each(cases)("edits only the selected setting through $label, saving only on Save", async entry => {
@@ -46,7 +47,7 @@ it.each(cases)("edits only the selected setting through $label, saving only on S
       }
       if (selections[0] === entry.label) {
         expect(title).toBe(`Transcript UI settings — ${entry.category}`);
-        expect(options).toEqual([...cases.filter(item => item.category === entry.category).map(item => item.label), "Back"]);
+        expect(options).toEqual([...new Set(cases.filter(item => item.category === entry.category).map(item => item.label)), "Back"]);
       }
       const selection = selections.shift()!;
       expect(options).toContain(selection);
@@ -61,6 +62,18 @@ it.each(cases)("edits only the selected setting through $label, saving only on S
   expect(await editSettings(ui, file)).toEqual(expected);
   expect((await file.load()).settings).toEqual(expected);
   expect(ui.notify).not.toHaveBeenCalled();
+});
+
+it.each(["flat", "native"] as const)("returns from saved codemode %s to the default indented layout", async initial => {
+  const file = await store(), settings = defaultSettings();
+  settings.display.codemode = initial; await file.save(settings, undefined);
+  const choices = ["Display", `Codemode: ${initial === "flat" ? "Independent items (flat)" : "Original"}`,
+    "Independent items (indented)", "Back", "Save"];
+  const ui = { select: vi.fn(async (_title: string, options: string[]) => {
+    const choice = choices.shift()!; expect(options).toContain(choice); return choice;
+  }), input: vi.fn(), editor: vi.fn(), notify: vi.fn() };
+  expect((await editSettings(ui, file))!.display.codemode).toBe("items");
+  expect((await file.load()).settings.display.codemode).toBe("items");
 });
 
 it("rejects an invalid draft edit without affecting the next selected field", async () => {

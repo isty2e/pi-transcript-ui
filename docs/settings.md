@@ -84,11 +84,13 @@ PowerShell uses the raw first-line form in either mode. Neither mode changes exe
 
 | Menu option | JSON key | Default | Values |
 | --- | --- | --- | --- |
-| Codemode | `display.codemode` | Independent items (`"items"`) | Independent items (`"items"`) / Original (`"native"`) |
+| Codemode | `display.codemode` | Independent items (indented) (`"items"`) | Independent items (indented) (`"items"`) / Independent items (flat) (`"flat"`) / Original (`"native"`) |
 
-Independent items gives the source, recorded activities and final script Output separate controls. Original keeps the aggregate parent and the active renderer's original body; it does not force Pi's built-in renderer. Neither choice sets a code-visibility default or changes execution. See [activity/body availability and fallback](usage.md#codemode).
+Both independent-item modes give the source, recorded activities and final script Output separate controls. Indented mode places activity/group/Output headings two columns below the source depth; local group members keep their additional indentation. Flat mode removes that codemode level, not Source or ordinary grouping indentation. Expanded output, source code, images and recorded-detail bodies retain their original width and indentation in both modes.
 
-Saved mode changes apply immediately. Existing source-renderer state is retained while its actual parent component survives; missing child results are not recovered by switching modes. Standalone grouping exclusions do not select Original mode. Older releases reject the new JSON key; remove `display.codemode` when reverting to one of those releases.
+Original keeps the aggregate parent and the active renderer's original body; it does not force Pi's built-in renderer. None of these choices sets a code-visibility default or changes execution. See [activity/body availability and fallback](usage.md#codemode).
+
+Saved mode changes apply immediately. Existing source-renderer state is retained while its actual parent component survives; missing child results are not recovered by switching modes. Standalone grouping exclusions do not select Original mode. Releases without codemode presentation settings reject the JSON key; remove it when reverting to those releases. Readers with only the original two choices reject `"flat"`; select `"items"` or `"native"` before reverting to one of them.
 
 ## Settings file
 
