@@ -32,6 +32,7 @@ const cases: readonly {
   { category: "Grouping", label: "Standalone tools — exclude auto-grouping (0)", editor: "external", change: s => { s.grouping.standalone = ["external"]; } },
   { category: "Display", label: "Command preview: Compact", submenu: "Raw", change: s => { s.display.commandPreview = "raw"; } },
   { category: "Display", label: "Tool duration: on", change: s => { s.display.toolDuration = false; } },
+  { category: "Display", label: "Codemode: Independent items", submenu: "Original", change: s => { s.display.codemode = "native"; } },
 ];
 
 it.each(cases)("edits only the selected setting through $label, saving only on Save", async entry => {

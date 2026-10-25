@@ -12,7 +12,7 @@ export interface GroupMemberSummary {
   readonly isError: boolean;
   readonly readPath: string | undefined;
   readonly metrics: SummaryMetrics;
-  readonly outputLines: number;
+  readonly outputLines: number | undefined;
   readonly shellSession: boolean;
 }
 
@@ -124,8 +124,8 @@ export function groupSummary(input: GroupSummaryInput): LineParts {
     metric = changeText(change);
   } else if (readGroup) {
     metric = readCountText(readCounted, members.length, readLines, repeated);
-  } else if (countOutput) {
-    metric = `(${members.reduce((total, member) => total + member.outputLines, 0)} lines)`;
+  } else if (countOutput && members.every(member => member.outputLines !== undefined)) {
+    metric = `(${members.reduce((total, member) => total + member.outputLines!, 0)} lines)`;
   }
 
   return {

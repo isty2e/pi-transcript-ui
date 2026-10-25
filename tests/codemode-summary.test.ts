@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
-import { codemodeSummary } from "../src/codemode-summary.js";
+import { codemodeSummary } from "../src/codemode/summary.js";
 import { codemodeLine, joinLine } from "../src/display.js";
 
 const summarize = (calls: unknown, isPartial = false) => codemodeSummary({

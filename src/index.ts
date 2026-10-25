@@ -7,6 +7,8 @@ import { intentGuideline, isRecord } from "./intent.js";
 import { INTENT_ENTRY, IntentTransport } from "./intent-transport.js";
 import { defaultSettings, groupingRules, SettingsFile } from "./settings.js";
 import { editSettings } from "./settings-ui.js";
+import { CodemodeRuntime } from "./codemode/pi.js";
+import { CodemodePresentation } from "./codemode/view.js";
 import packageMetadata from "../package.json" with { type: "json" };
 
 export const TRANSCRIPT_UI_VERSION = packageMetadata.version;
@@ -23,6 +25,8 @@ export default function transcriptUi(pi: ExtensionAPI): void {
   let reportPersistenceError: (error: unknown) => void = (error) => { process.stderr.write(`transcript-ui intent was not persisted: ${String(error)}\n`); };
   const intents = new IntentTransport((records) => pi.appendEntry(INTENT_ENTRY, records), (error) => { reportPersistenceError(error); });
   let settings = defaultSettings();
+  const codemode = new CodemodeRuntime(pi, () => settings.display.codemode);
+  const codemodePresentation = new CodemodePresentation(codemode);
   let detach: PresentationAttachment | undefined;
   let closeNavigator: (() => void) | undefined;
   let reconfigure: (() => void) | undefined;
@@ -51,6 +55,7 @@ export default function transcriptUi(pi: ExtensionAPI): void {
   pi.on("session_start", async (_event, ctx) => {
     closeNavigator?.();
     detach?.(); detach = undefined; reconfigure = undefined;
+    codemodePresentation.dispose(); codemode.stop();
     reportPersistenceError = (error) => {
       const message = `Transcript intent remains visible but was not saved: ${String(error)}`;
       notify(ctx, message, "error");
@@ -58,9 +63,11 @@ export default function transcriptUi(pi: ExtensionAPI): void {
     try { settings = (await file.load()).settings; }
     catch (error) { notify(ctx, `Settings not loaded: ${String(error)}`, "error"); }
     intents.restore(ctx.sessionManager.getBranch());
+    codemode.start(ctx);
     if (ctx.mode !== "tui") return;
     live = true;
     ctx.ui.setWidget(WIDGET_KEY, (tui) => {
+      codemode.setRoot(tui);
       reconfigure = () => {
         closeNavigator?.();
         detach?.(); detach = undefined;
@@ -68,6 +75,8 @@ export default function transcriptUi(pi: ExtensionAPI): void {
         try {
           detach = attachTranscriptPresentation(tui, {
             getTheme: () => ctx.ui.theme, requestRender: () => tui.requestRender(), rules: groupingRules(settings), displayLimits: settings.display,
+            codemode: codemodePresentation,
+            resolveParameters: name => pi.getAllTools().find(tool => tool.name === name)?.parameters,
             resolveIntent: (id, args) => settings.intent.enabled ? intents.resolve(id, args, settings.intent.maxLength) : undefined,
             onUnsupported: (name, error) => ctx.ui.notify(`transcript-ui kept ${name} native: ${String(error)}`, "warning"),
             onCleanupIncomplete: (source, failure) => {
@@ -87,8 +96,10 @@ export default function transcriptUi(pi: ExtensionAPI): void {
   pi.on("session_tree", (_event, ctx) => { intents.restore(ctx.sessionManager.getBranch()); });
   pi.on("session_shutdown", (_event, ctx) => {
     live = false;
+    codemode.shutdown();
     closeNavigator?.();
     detach?.(); detach = undefined; reconfigure = undefined;
+    codemodePresentation.dispose();
     if (ctx.mode === "tui") ctx.ui.setWidget(WIDGET_KEY, undefined);
   });
   pi.on("before_agent_start", (event) => {

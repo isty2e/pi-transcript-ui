@@ -3,16 +3,17 @@ import { isAbsolute, normalize, resolve } from "node:path";
 import { isRecord } from "./intent.js";
 import { Spacer, stripTerminalSequences, truncateToWidth, type Component } from "@earendil-works/pi-tui";
 import { classifyTool, type ToolGroupingRules, type ToolClassification } from "./classify.js";
-import { changeText, failureText, countResultLines, codemodeLine, shellSessionLine, displayFor, runningLine, settledLine, DEFAULT_DISPLAY_LIMITS, type DisplayLimits, type LineParts, type CommandSpan } from "./display.js";
+import { changeText, failureText, countResultLines, codemodeLine, shellSessionLine, displayFor, runningLine, settledLine, recordedActivityLine, DEFAULT_DISPLAY_LIMITS, type DisplayLimits, type LineParts, type CommandSpan } from "./display.js";
 import { intentFromArgs } from "./intent.js";
 import type { DisclosureTarget } from "./navigation.js";
 import { fileReadFor } from "./read-body.js";
 import { fileMutationFor } from "./file-mutation.js";
 import { createPatchRequestParser } from "./patch-request.js";
 import { summaryMetrics, type FileCapabilities } from "./tool-metrics.js";
-import { groupSummary, groupSummaryRequirements } from "./group-summary.js";
+import { groupSummary, groupSummaryRequirements, type GroupMemberSummary } from "./group-summary.js";
+import type { CodemodePresentation, CodemodeScope, GroupRow, ItemToolkit, SourceProjection } from "./codemode/view.js";
 import { createCommandColorizer } from "./shell-colors.js";
-import { codemodeSummary } from "./codemode-summary.js";
+import { codemodeSummary } from "./codemode/summary.js";
 import { shellSessionSummary } from "./shell-session-summary.js";
 import { toolDurationMs } from "./tool-duration.js";
 import { toolPhase, type ToolPhase } from "./tool-phase.js";
@@ -64,10 +65,12 @@ function phaseFor(tool: NativeToolComponent): ToolPhase {
   return toolPhase({ hasResult: Boolean(tool.result), isPartial: tool.isPartial, executionStarted: tool.executionStarted === true });
 }
 
-function shellSessionFor(tool: NativeToolComponent, capabilities: FileCapabilities, phase: ToolPhase) {
+type SummaryTool = Pick<NativeToolComponent, "toolName" | "toolCallId" | "args" | "result" | "cwd">;
+
+function shellSessionFor(tool: SummaryTool, capabilities: FileCapabilities, phase: ToolPhase, parameters?: unknown) {
   if (tool.toolName !== "exec_command" && tool.toolName !== "write_stdin") return undefined;
   if (capabilities.mutation || capabilities.read || capabilities.patch) return undefined;
-  return shellSessionSummary({ toolName: tool.toolName, parameters: tool.toolDefinition?.parameters, args: tool.args,
+  return shellSessionSummary({ toolName: tool.toolName, parameters, args: tool.args,
     result: tool.result, isPartial: phase !== "settled" });
 }
 
@@ -88,7 +91,7 @@ function transparentAssistant(component: Component): boolean {
   return isAssistant(component) && !component.isStreaming && component.hasToolCalls &&
     component.children.length === 1 && component.children[0] === component.contentContainer && component.contentContainer.children.length === 0;
 }
-function readPathKey(tool: NativeToolComponent): string | undefined {
+function readPathKey(tool: Pick<NativeToolComponent, "args" | "cwd">): string | undefined {
   if (!isRecord(tool.args) || typeof tool.args.path !== "string" || !tool.args.path || tool.args.path.includes("\0")) return undefined;
   let path = tool.args.path.replace(/[\u00a0\u2000-\u200a\u202f\u205f\u3000]/g, " ").replace(/^@/, "");
   if (!path || path.startsWith("file:") || (process.platform === "win32" && path.startsWith("/"))) return undefined;
@@ -136,20 +139,33 @@ class SummaryRow implements Component {
   invalidate(): void {}
 }
 
-class ToolGroup extends SummaryRow implements DisclosureTarget {
+class DisclosureGroup extends SummaryRow implements GroupRow {
   readonly kind = "group" as const;
   get label(): string { return this.text; }
   readonly toolName = "__group__";
-  readonly toolCallId: string;
+  protected open = false;
+  constructor(readonly toolCallId: string, read: () => string, private readonly busy: () => boolean,
+    private readonly redraw: () => void, maxWidth?: number, private readonly getParent?: () => DisclosureTarget) { super(read, maxWidth); }
+  get parent(): DisclosureTarget | undefined { return this.getParent?.(); }
+  get expanded(): boolean { return this.open || this.busy(); }
+  setExpanded(value: boolean): void { this.open = value; this.redraw(); }
+  inheritExpansion(other: DisclosureTarget): void { if (other instanceof DisclosureGroup) this.open ||= other.open; }
+  handleMouse(event: Parameters<NonNullable<Component["handleMouse"]>>[0]) {
+    if (event.button !== "left") return undefined;
+    if (event.type === "press") return { handled: true };
+    if (event.type === "click") { this.setExpanded(!this.expanded); return { handled: true }; }
+    return undefined;
+  }
+}
+
+class ToolGroup extends DisclosureGroup {
   readonly members: NativeToolComponent[] = [];
-  private open = false;
   private readonly classifications = new Map<NativeToolComponent, ToolClassification>();
   addMember(tool: NativeToolComponent, classification: ToolClassification, inheritMemberExpansion = true): void {
     this.members.push(tool);
     this.classifications.set(tool, classification);
     if (inheritMemberExpansion) this.open ||= tool.expanded;
   }
-  inheritExpansion(other: ToolGroup): void { this.open ||= other.open; }
   resetMembers(): void { this.members.length = 0; this.classifications.clear(); }
   removeMember(tool: NativeToolComponent): void {
     const index = this.members.indexOf(tool);
@@ -158,14 +174,10 @@ class ToolGroup extends SummaryRow implements DisclosureTarget {
   }
   constructor(id: number, readonly classification: ToolClassification,
     private readonly getCapability: (tool: NativeToolComponent) => FileCapabilities | undefined,
-    private readonly getTheme: () => RowTheme, private readonly requestRender: () => void, maxWidth?: number) {
-    super(() => this.summary(), maxWidth);
-    this.toolCallId = `pi-transcript-ui:group:${id}`;
+    private readonly getTheme: () => RowTheme, requestRender: () => void, maxWidth?: number,
+    private readonly getParameters: (tool: NativeToolComponent) => unknown = tool => tool.toolDefinition?.parameters) {
+    super(`pi-transcript-ui:group:${id}`, () => this.summary(), () => this.members.some(m => phaseFor(m) !== "settled"), requestRender, maxWidth);
   }
-  get expanded(): boolean {
-    return this.open || this.members.some((m) => !m.result || m.isPartial);
-  }
-  setExpanded(expanded: boolean): void { this.open = expanded; this.requestRender(); }
   private summary(): string {
     const members = this.members.map(tool => {
       const classification = this.classifications.get(tool)!;
@@ -175,7 +187,7 @@ class ToolGroup extends SummaryRow implements DisclosureTarget {
         toolName: tool.toolName,
         classification,
         capabilities,
-        shellSession: shellSessionFor(tool, capabilities, phase) !== undefined,
+        shellSession: shellSessionFor(tool, capabilities, phase, this.getParameters(tool)) !== undefined,
         phase,
         isError: tool.result?.isError === true,
         metrics: summaryMetrics({ toolName: tool.toolName, args: tool.args, result: tool.result,
@@ -187,7 +199,7 @@ class ToolGroup extends SummaryRow implements DisclosureTarget {
     const completeMembers = members.map((member, index) => ({
       ...member,
       readPath: required.readIdentity ? readPathKey(this.members[index]!) : undefined,
-      outputLines: required.outputLines ? countResultLines(this.members[index]!.result?.content) : 0,
+      outputLines: required.outputLines && Array.isArray(this.members[index]!.result?.content) ? countResultLines(this.members[index]!.result?.content) : undefined,
     }));
     const parts = groupSummary({ ...input, members: completeMembers });
     return styleLine(this.getTheme(), parts);
@@ -200,6 +212,8 @@ export interface PresentationOptions {
   rules?: ToolGroupingRules | null;
   displayLimits?: Readonly<Partial<DisplayLimits>>;
   resolveIntent?(toolCallId: string, args: unknown): string | undefined;
+  resolveParameters?(toolName: string): unknown;
+  codemode?: CodemodePresentation;
   onUnsupported?(toolName: string, error: unknown): void;
   onCleanupIncomplete?(source: CleanupSource, failure: CleanupIncomplete): void;
 }
@@ -311,6 +325,7 @@ type ToolDecoration = {
   readonly group: ToolGroup | null;
   setGroup(group: ToolGroup | null): void;
   setClassification(classification: ToolClassification): void;
+  setProjection(projection: SourceProjection): void;
   release(): CleanupOutcome;
 };
 type DecorationAttempt = { kind: "decorated"; binding: ToolDecoration } |
@@ -319,12 +334,12 @@ type DecorationAttempt = { kind: "decorated"; binding: ToolDecoration } |
 /** Scoped native-tree access leaves Pi's state, definition, shell and lifecycle authoritative. */
 function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null, options: PresentationOptions, capabilities: FileCapabilities,
   classification: ToolClassification, onUpdate: (() => void) | undefined,
-  onFailure: (error: unknown, cleanup: CleanupOutcome) => void): DecorationAttempt {
+  onFailure: (error: unknown, cleanup: CleanupOutcome) => void, parameters?: unknown): DecorationAttempt {
   let group = initialGroup;
   const toolName = tool.toolName;
   const capability = capabilities.mutation;
   const children = captureNativeChildren(tool);
-  const methodKeys = ["render", "invalidate", "updateDisplay", "handleMouse", "setExpanded", "addChild", "removeChild", "clear"] as const;
+  const methodKeys = ["render", "invalidate", "updateDisplay", "updateArgs", "updateResult", "handleMouse", "setExpanded", "addChild", "removeChild", "clear"] as const;
   if (!Object.isExtensible(tool) || methodKeys.some((key) => {
     const descriptor = propertyDescriptor(tool, key);
     return descriptor ? !("value" in descriptor) || descriptor.writable !== true ||
@@ -340,6 +355,8 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
   const originalRender = tool.render;
   const originalInvalidate = tool.invalidate;
   const originalUpdate = tool.updateDisplay;
+  const originalArgs = tool.updateArgs;
+  const originalResult = tool.updateResult;
   const originalMouse = tool.handleMouse;
   const originalExpanded = tool.setExpanded;
   const originalAdd = tool.addChild;
@@ -350,6 +367,7 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
     descriptors.set(key, Object.getOwnPropertyDescriptor(tool, key));
   }
   let colorizer: ReturnType<typeof createCommandColorizer> | undefined;
+  let projection: SourceProjection | undefined;
   const colorCommand = (command: CommandSpan, text: string, theme: RowTheme): string =>
     active ? (colorizer ??= createCommandColorizer()).format(command, text, theme) : text;
   const row = new SummaryRow((width) => {
@@ -358,26 +376,30 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
     const display = displayFor(tool.toolName, tool.args, capability, capabilities.read, capabilities.patch);
     const phase = phaseFor(tool);
     const intent = options.resolveIntent ? options.resolveIntent(tool.toolCallId, tool.args) : intentFromArgs(tool.args);
-    const shellSession = shellSessionFor(tool, capabilities, phase);
-    const code = display === null ? codemodeSummary({ toolName: tool.toolName, args: tool.args,
+    const shellSession = shellSessionFor(tool, capabilities, phase, parameters);
+    const itemProjection = projection?.items ? projection : undefined;
+    const outcome = itemProjection?.outcome;
+    const isError = outcome?.isError ?? tool.result?.isError === true;
+    const code = itemProjection ? itemProjection.summary(phase) : display === null ? codemodeSummary({ toolName: tool.toolName, args: tool.args,
       result: tool.result, phase }) : undefined;
-    const context = { intent, layout, durationMs: toolDurationMs(tool.result, tool.isPartial) };
-    const parts = shellSession ? shellSessionLine(shellSession, tool.result?.isError === true, phase, context)
-      : code ? codemodeLine({ summary: code, isError: tool.result?.isError === true, ...context })
+    const context = { intent, layout, durationMs: outcome ? outcome.durationMs : toolDurationMs(tool.result, tool.isPartial) };
+    const parts = shellSession ? shellSessionLine(shellSession, isError, phase, context)
+      : code ? codemodeLine({ summary: code, isError, ...context })
       : phase === "settled"
       ? settledLine({ toolName: tool.toolName, display, content: tool.result?.content,
-        isError: tool.result?.isError === true, ...context,
+        isError, ...context,
         metrics: summaryMetrics({ toolName: tool.toolName, args: tool.args, result: tool.result,
           isPartial: false, classification, capabilities }) })
       : runningLine(tool.toolName, display, intent, layout, phase);
-    if (tool.result?.isError === true || !parts.command) colorizer?.clear();
-    return `${indent}${styleLine(options.getTheme(), { ...parts, marker: tool.expanded ? "▾" : "▸" }, tool.result?.isError === true, colorCommand)}`;
+    if (isError || !parts.command) colorizer?.clear();
+    return `${indent}${styleLine(options.getTheme(), { ...parts, rest: `${parts.rest}${projection?.fallback ? " (original)" : ""}`,
+      ...(itemProjection ? { action: "Code source" } : {}), marker: tool.expanded ? "▾" : "▸" }, isError, colorCommand)}`;
   }, options.displayLimits?.rowMaxWidth);
-  // This body is the entire original rendering, including its leading spacer,
-  // shell, fallbacks and images. No text extraction, reindentation or truncation.
+  // Ordinary bodies keep the whole native shell/images. Codemode delegates only
+  // its live call slot here, leaving each result with its own disclosure target.
   const body: Component & { readonly children: Component[] } = {
-    get children() { return children.read(); },
-    render: (width) => native(() => originalRender.call(tool, width)),
+    get children() { return projection?.items ? projection.body.children : children.read(); },
+    render: (width) => projection?.items ? projection.body.render(width) : native(() => originalRender.call(tool, width)),
     invalidate: () => native(() => originalInvalidate.call(tool)),
   };
   const spacer = new Spacer(1);
@@ -396,28 +418,39 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
     get parent() { return group && group.members.length > 1 ? group : undefined; },
     setExpanded(expanded) { if (active) tool.setExpanded(expanded); },
   };
-  const childrenGet = () => nativeDepth > 0 || !active ? children.read() : projectedChildren();
+  const childrenGet = () => nativeDepth > 0 || !active ? children.read()
+    : projection?.items ? projection.sourceChildren(projectedChildren) : projectedChildren();
   const childrenSet = (next: Component[]) => children.write(next);
   const render: NativeToolComponent["render"] = function (width) {
     if (!active || nativeDepth > 0) return native(() => originalRender.call(tool, width));
-    return projectedChildren().flatMap((child) => child.render(width));
+    return projection?.items ? projection.sourceLines(width, () => childrenGet().flatMap(child => child.render(width)))
+      : projectedChildren().flatMap((child) => child.render(width));
   };
   const update = () => {
     native(() => originalUpdate.call(tool));
     if (active && nativeDepth === 0) {
-      try { onUpdate?.(); }
+      try { onUpdate?.(); projection?.changed(); }
       catch (error) { onFailure(error, release()); }
     }
   };
-  const invalidate = () => native(() => originalInvalidate.call(tool));
+  const invalidate = () => { native(() => originalInvalidate.call(tool)); if (active) projection?.changed(); };
+  const changedData = () => {
+    if (!active) return;
+    try { onUpdate?.(); projection?.observe(); }
+    catch (error) { onFailure(error, release()); }
+  };
+  const updateArgs: NativeToolComponent["updateArgs"] = args => { native(() => originalArgs.call(tool, args)); changedData(); };
+  const updateResult: NativeToolComponent["updateResult"] = (result, partial) => { native(() => originalResult.call(tool, result, partial)); changedData(); };
   const mouse: NonNullable<Component["handleMouse"]> = (event) => {
     if (!active || nativeDepth > 0) return native(() => originalMouse?.call(tool, event));
+    if (projection?.items && !projection.current(event.width)) { options.requestRender(); return { handled: true }; }
     const children = projectedChildren();
     let offset = 0;
     for (const child of children) {
       const height = child.render(event.width).length;
       if (event.y >= offset && event.y < offset + height) {
-        if (child === body) return native(() => originalMouse?.call(tool, { ...event, y: event.y - offset, height }));
+        if (child === body) return projection?.items ? projection.body.handleMouse?.({ ...event, y: event.y - offset, height })
+          : native(() => originalMouse?.call(tool, { ...event, y: event.y - offset, height }));
         if (child === spacer) return undefined;
         if (event.type === "press" && event.button === "left") return { handled: true };
         if (event.type === "click" && event.button === "left") {
@@ -433,6 +466,7 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
   };
   const setExpanded = (expanded: boolean) => {
     native(() => originalExpanded.call(tool, expanded));
+    if (active) projection?.changed();
     if (active && expanded) {
       try { group?.setExpanded(true); }
       catch (error) { onFailure(error, release()); }
@@ -441,7 +475,7 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
   const add = (child: Component) => native(() => originalAdd.call(tool, child));
   const remove = (child: Component) => native(() => originalRemove.call(tool, child));
   const clear = () => native(() => originalClear.call(tool));
-  const replacements = { render, invalidate, updateDisplay: update, handleMouse: mouse, setExpanded, addChild: add, removeChild: remove, clear };
+  const replacements = { render, invalidate, updateDisplay: update, updateArgs, updateResult, handleMouse: mouse, setExpanded, addChild: add, removeChild: remove, clear };
   const installed = new Map<string, PropertyDescriptor>();
   function release(): CleanupOutcome {
     active = false;
@@ -465,10 +499,10 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
     return cleanup.kind === "complete" ? { kind: "native", error } : { kind: "cleanup-incomplete", error, cleanup };
   }
   return { kind: "decorated", binding: { toolName, target, get group() { return group; }, setGroup(next) { group = next; },
-    setClassification(next) { classification = next; }, release } };
+    setClassification(next) { classification = next; }, setProjection(next) { projection = next; }, release } };
 }
 
-/** Attach to Pi 0.85's actual chat container. No prototype patch or editor/footer ownership. */
+/** Attach to the actual chat container without owning the editor or footer. */
 export function attachTranscriptPresentation(root: { children: Component[] }, options: PresentationOptions): PresentationAttachment {
   const document = root.children[0] as Partial<ChatContainer> | undefined;
   // Pi 0.85.1 puts header, resource notices and chat inside its document.
@@ -484,39 +518,92 @@ export function attachTranscriptPresentation(root: { children: Component[] }, op
     throw new Error("Unsupported Pi transcript container; native tools left unchanged");
   }
   const container = chat as ChatContainer;
+  const renderDescriptor = propertyDescriptor(container, "render");
+  const canProject = Boolean(options.codemode && Object.isExtensible(container) && renderDescriptor &&
+    "value" in renderDescriptor && renderDescriptor.writable && typeof renderDescriptor.value === "function");
   const releases = new Map<Component, () => CleanupOutcome>();
+  const declined = new WeakSet<Component>();
   const decorations = new Map<NativeToolComponent, ToolDecoration>();
   const classifications = new Map<NativeToolComponent, ToolClassification>();
   const assistants = new Set<Component>();
   const capabilities = new Map<NativeToolComponent, FileCapabilities>();
+  const parameters = new Map<NativeToolComponent, unknown>();
+  const scopes = new Map<NativeToolComponent, CodemodeScope>();
+  const sources = new Map<Component, NativeToolComponent>();
+  const childParameters = new Map<string, unknown>();
+  const sourceChildren = () => container.children.map(child => sources.get(child) ?? child);
   let run: ToolGroup | null = null;
   let groupId = 0;
   let active = true;
+  let structureDirty = true;
+  let observedChildren: Component[] = [];
   const originalAdd = container.addChild;
   const originalRemove = container.removeChild;
   const originalClear = container.clear;
-  const originalDescriptors = new Map(["addChild", "removeChild", "clear"].map((key) => [key, Object.getOwnPropertyDescriptor(container, key)]));
+  const originalRender = container.render;
+  const originalDescriptors = new Map(["addChild", "removeChild", "clear", "render"].map((key) => [key, Object.getOwnPropertyDescriptor(container, key)]));
+  const toolkit: ItemToolkit = {
+    row: read => new SummaryRow(read, options.displayLimits?.rowMaxWidth),
+    format: (parts, error) => styleLine(options.getTheme(), parts, error),
+    requestRender: options.requestRender,
+    describe(record, matched, parent) {
+      const input = matched ? options.codemode?.runtime.input(matched) : undefined;
+      if (!childParameters.has(record.name)) childParameters.set(record.name, options.resolveParameters?.(record.name));
+      const schema = childParameters.get(record.name);
+      const mutation = fileMutationFor(schema), read = fileReadFor(schema);
+      const patch = !mutation && !read ? createPatchRequestParser(schema)?.(input?.args) : undefined;
+      const caps: FileCapabilities = { mutation, read, patch };
+      const classification = classifyTool(record.name, options.rules, mutation ?? patch);
+      const phase: ToolPhase = input || record.status !== "running" ? "settled" : "running";
+      const args = input?.args, result = input?.result;
+      const isError = input ? input.result.isError : record.status === "error";
+      const metrics = summaryMetrics({ toolName: record.name, args, result, isPartial: phase !== "settled", classification, capabilities: caps });
+      const member: GroupMemberSummary = { toolName: record.name, classification, capabilities: caps, phase, isError, metrics,
+        readPath: input ? readPathKey({ args, ...(parent.cwd === undefined ? {} : { cwd: parent.cwd }) }) : undefined,
+        outputLines: Array.isArray(result?.content) ? countResultLines(result.content) : undefined,
+        shellSession: input ? shellSessionSummary({ toolName: record.name, parameters: schema, args, result, isPartial: false }) !== undefined : false };
+      return { classification, member, line(width) {
+        const layout = { limits: options.displayLimits ?? DEFAULT_DISPLAY_LIMITS, ...(width === undefined ? {} : { width }) };
+        if (!input) return recordedActivityLine(record.name, record.preview, record.status, layout, record.durationMs);
+        const intent = options.resolveIntent ? options.resolveIntent(input.id, args) : intentFromArgs(args);
+        const context = { intent, layout, durationMs: result?.durationMs ?? record.durationMs };
+        const shell = shellSessionSummary({ toolName: record.name, parameters: schema, args, result, isPartial: false });
+        if (shell) return shellSessionLine(shell, isError, "settled", context);
+        return settledLine({ toolName: record.name, display: displayFor(record.name, args, mutation, read, patch),
+          content: result?.content, isError, metrics, ...context });
+      } };
+    },
+    group(id, classification, members, parent) {
+      const header: DisclosureGroup = new DisclosureGroup(id, () => styleLine(options.getTheme(), groupSummary({ classification,
+        members: members(), expanded: header.expanded })), () => members().some(member => member.phase !== "settled"),
+      options.requestRender, options.displayLimits?.rowMaxWidth, parent);
+      return header;
+    },
+  };
   const reportUnsupported = (name: string, error: unknown) => reportSafely(() => options.onUnsupported?.(name, error));
   const reportCleanup = (source: CleanupSource, outcome: CleanupOutcome) => {
     if (outcome.kind === "cleanup-incomplete") reportSafely(() => options.onCleanupIncomplete?.(source, outcome));
   };
   const unpublishTool = (child: NativeToolComponent, binding: ToolDecoration): CleanupOutcome => {
     if (decorations.get(child) !== binding) return COMPLETE;
+    structureDirty = true;
     releases.delete(child);
     decorations.delete(child);
     classifications.delete(child);
     capabilities.delete(child);
+    parameters.delete(child);
     return attemptCleanup("group membership", () => binding.group?.removeMember(child));
   };
   const releaseChild = (child: Component): CleanupOutcome => {
     const release = releases.get(child);
     if (!release) return COMPLETE;
+    structureDirty = true;
     releases.delete(child);
     try { return release(); }
     catch (error) { return cleanupOutcome([{ slot: "component release", error }]); }
   };
   const observe = (child: Component): void => {
-    if (!active || releases.has(child)) return;
+    if (!active || releases.has(child) || declined.has(child)) return;
     if (!isTool(child)) {
       if (isAssistant(child) && !assistants.has(child)) {
         const original = child.updateContent;
@@ -532,6 +619,7 @@ export function attachTranscriptPresentation(root: { children: Component[] }, op
             if (before === undefined) throw observationError;
             if (active && before !== transparentAssistant(child)) reconcile();
           } catch (error) {
+            declined.add(child);
             const cleanup = releaseChild(child);
             if (cleanup.kind === "complete") reportUnsupported("assistant", error);
             else reportCleanup({ kind: "attachment" }, cleanup);
@@ -549,6 +637,7 @@ export function attachTranscriptPresentation(root: { children: Component[] }, op
           assistants.add(child);
           releases.set(child, release);
         } catch (error) {
+          declined.add(child);
           const cleanup = release();
           if (cleanup.kind === "complete") reportUnsupported("assistant", error);
           else reportCleanup({ kind: "attachment" }, cleanup);
@@ -560,9 +649,10 @@ export function attachTranscriptPresentation(root: { children: Component[] }, op
     let capability: FileCapabilities = { mutation: undefined, read: undefined };
     let parsePatch: ReturnType<typeof createPatchRequestParser>;
     try {
-      const parameters = child.toolDefinition?.parameters;
-      const mutation = fileMutationFor(parameters), read = fileReadFor(parameters);
-      parsePatch = !mutation && !read ? createPatchRequestParser(parameters) : undefined;
+      const schema = options.resolveParameters?.(child.toolName) ?? child.toolDefinition?.parameters;
+      parameters.set(child, schema);
+      const mutation = fileMutationFor(schema), read = fileReadFor(schema);
+      parsePatch = !mutation && !read ? createPatchRequestParser(schema) : undefined;
       capability = { mutation, read, get patch() { return parsePatch?.(child.args); } };
     } catch {
       // Opaque definitions retain native fallback.
@@ -580,12 +670,14 @@ export function attachTranscriptPresentation(root: { children: Component[] }, op
     const classification = classify();
     if (classification.family === null) run = null;
     else if (run === null || run.classification.family !== classification.family) {
-      run = new ToolGroup(groupId++, classification, (tool) => capabilities.get(tool), options.getTheme, options.requestRender, options.displayLimits?.rowMaxWidth);
+      run = new ToolGroup(groupId++, classification, (tool) => capabilities.get(tool), options.getTheme, options.requestRender, options.displayLimits?.rowMaxWidth, tool => parameters.get(tool));
     }
     const group = run;
     const name = child.toolName;
     let decorated: ToolDecoration | undefined;
     const failed = (error: unknown, cleanup: CleanupOutcome) => {
+      declined.add(child);
+      parameters.delete(child);
       run = null;
       parsePatch = undefined;
       const published = decorated !== undefined && decorations.get(child) === decorated;
@@ -596,8 +688,10 @@ export function attachTranscriptPresentation(root: { children: Component[] }, op
       else reportCleanup({ kind: "tool", toolName: name }, outcome);
     };
     let attempt: DecorationAttempt;
-    try { attempt = decorateTool(child, group, options, capability, classification, parsePatch ? refresh : undefined, failed); }
+    try { attempt = decorateTool(child, group, options, capability, classification, parsePatch ? refresh : undefined, failed, parameters.get(child)); }
     catch (error) {
+      declined.add(child);
+      parameters.delete(child);
       run = null;
       reportUnsupported(name, error);
       return;
@@ -613,6 +707,8 @@ export function attachTranscriptPresentation(root: { children: Component[] }, op
       capabilities.set(child, capability);
       classifications.set(child, classification);
       group?.addMember(child, classification);
+      const scope = canProject ? options.codemode?.attach(child, binding.target, toolkit, () => !binding.group || binding.group.members.length < 2 || binding.group.expanded) : undefined;
+      if (scope) { scopes.set(child, scope); sources.set(scope, child); binding.setProjection(scope); }
       releases.set(child, () => {
         parsePatch = undefined;
         return combineCleanup([binding.release(), unpublishTool(child, binding)]);
@@ -622,6 +718,8 @@ export function attachTranscriptPresentation(root: { children: Component[] }, op
   const observeSafely = (child: Component) => {
     try { observe(child); }
     catch (error) {
+      declined.add(child);
+      parameters.delete(child as NativeToolComponent);
       run = null;
       const cleanup = releaseChild(child);
       if (cleanup.kind === "complete") reportUnsupported("component", error);
@@ -636,7 +734,7 @@ export function attachTranscriptPresentation(root: { children: Component[] }, op
     for (const group of oldGroups) group?.resetMembers();
     const used = new Set<ToolGroup>();
     run = null;
-    for (const child of container.children) {
+    for (const child of sourceChildren()) {
       const binding = isTool(child) ? decorations.get(child) : undefined;
       if (!binding || !isTool(child)) {
         if (!assistants.has(child) || !transparentAssistant(child)) run = null;
@@ -647,7 +745,7 @@ export function attachTranscriptPresentation(root: { children: Component[] }, op
       if (classification.family === null) run = null;
       else if (!run || run.classification.family !== classification.family) {
         run = old && !used.has(old) && old.classification.family === classification.family ? old
-          : new ToolGroup(groupId++, classification, (tool) => capabilities.get(tool), options.getTheme, options.requestRender, options.displayLimits?.rowMaxWidth);
+          : new ToolGroup(groupId++, classification, (tool) => capabilities.get(tool), options.getTheme, options.requestRender, options.displayLimits?.rowMaxWidth, tool => parameters.get(tool));
         used.add(run);
       }
       if (run && old) run.inheritExpansion(old);
@@ -656,6 +754,54 @@ export function attachTranscriptPresentation(root: { children: Component[] }, op
     }
   };
   const reconcile = () => { reconcileGroups(); options.requestRender(); };
+  // Native entries can splice the actual array without calling our add/remove hooks.
+  const sameChildSequence = (): boolean => {
+    const children = container.children;
+    if (children.length !== observedChildren.length) return false;
+    for (let index = 0; index < children.length; index++) if (children[index] !== observedChildren[index]) return false;
+    return true;
+  };
+  const replaceScopeSlot = (index: number, expected: Component, replacement: Component): void => {
+    const children = container.children;
+    if (children[index] !== expected) { structureDirty = true; return; }
+    if (expected !== replacement) children[index] = replacement;
+    if (observedChildren[index] === expected) observedChildren[index] = replacement;
+  };
+  let reconciling = false;
+  const project = () => {
+    if (!active || reconciling || !canProject || !options.codemode) return;
+    if (!structureDirty && sameChildSequence()) return;
+    reconciling = true;
+    structureDirty = false;
+    try {
+      observedChildren = container.children.slice();
+      const current = observedChildren.map(child => sources.get(child) ?? child), present = new Set(current);
+      for (const child of releases.keys()) if (!present.has(child)) reportCleanup({ kind: "attachment" }, releaseChild(child));
+      for (const child of current) observeSafely(child);
+      const parents = new Set(current.filter(isTool));
+      for (const [parent, scope] of scopes) if (!parents.has(parent) || !decorations.has(parent)) {
+        const index = container.children.indexOf(scope);
+        if (index >= 0) replaceScopeSlot(index, scope, parent);
+        scopes.delete(parent); sources.delete(scope);
+      }
+      options.codemode.prune(new Set([...parents].filter(parent => decorations.has(parent))));
+      reconcileGroups();
+      for (let index = 0; index < container.children.length; index++) {
+        const value = container.children[index]!, parent = sources.get(value) ?? (isTool(value) ? value : undefined);
+        const scope = parent && scopes.get(parent);
+        if (scope) replaceScopeSlot(index, value, scope.items ? scope : parent!);
+      }
+    } catch (error) {
+      structureDirty = true;
+      throw error;
+    } finally { reconciling = false; }
+  };
+  const unproject = () => {
+    for (let index = 0; index < container.children.length; index++) {
+      const source = sources.get(container.children[index]!);
+      if (source) container.children[index] = source;
+    }
+  };
   const clearDecorations = () => {
     const outcomes: CleanupOutcome[] = [];
     for (const child of releases.keys()) outcomes.push(releaseChild(child));
@@ -664,23 +810,36 @@ export function attachTranscriptPresentation(root: { children: Component[] }, op
   };
   const add = function (this: ChatContainer, child: Component): void {
     originalAdd.call(this, child);
-    if (active) observeSafely(child);
+    if (active) { observeSafely(child); project(); }
   };
   const remove = function (this: ChatContainer, child: Component): void {
-    originalRemove.call(this, child);
+    const scope = isTool(child) ? scopes.get(child) : undefined;
+    originalRemove.call(this, scope && this.children.includes(scope) ? scope : child);
     if (!active) return;
     const binding = decorations.get(child as NativeToolComponent);
     const source: CleanupSource = binding ? { kind: "tool", toolName: binding.toolName } : { kind: "attachment" };
     const cleanup = releaseChild(child);
     const reconciled = attemptCleanup("transcript reconciliation", reconcileGroups);
+    project();
     reportCleanup(source, combineCleanup([cleanup, reconciled]));
     try { options.requestRender(); }
     catch { /* A failed redraw does not mean restoration failed. */ }
   };
   const clear = function (this: ChatContainer): void {
+    unproject();
     const cleanup = active ? clearDecorations() : COMPLETE;
     try { originalClear.call(this); }
-    finally { reportCleanup({ kind: "attachment" }, cleanup); }
+    finally { project(); reportCleanup({ kind: "attachment" }, cleanup); }
+  };
+  const render = function (this: ChatContainer, width: number): string[] {
+    project();
+    // New metadata can admit an unchanged parent; keep view preparation outside the membership cache.
+    if (active && scopes.size) for (let index = 0; index < this.children.length; index++) {
+      const value = this.children[index]!, source = sources.get(value) ?? value as NativeToolComponent;
+      const scope = scopes.get(source);
+      if (scope) replaceScopeSlot(index, value, scope.items && scope.prepare(width) ? scope : source);
+    }
+    return originalRender.call(this, width);
   };
   const installedChat = new Map<string, PropertyDescriptor>();
   const restoreChatMethods = () => {
@@ -691,30 +850,35 @@ export function attachTranscriptPresentation(root: { children: Component[] }, op
     return combineCleanup(outcomes);
   };
   try {
-    for (const child of container.children) observeSafely(child);
-    for (const [key, replacement] of [["addChild", add], ["removeChild", remove], ["clear", clear]] as const) {
+    for (const child of sourceChildren()) observeSafely(child);
+    for (const [key, replacement] of [["addChild", add], ["removeChild", remove], ["clear", clear], ...(canProject ? [["render", render] as const] : [])] as const) {
       const expected = { ...(originalDescriptors.get(key) ?? { configurable: true, enumerable: true, writable: true }), value: replacement };
       installedChat.set(key, expected);
       Object.defineProperty(container, key, expected);
     }
+    project();
   } catch (error) {
     active = false;
+    observedChildren = [];
+    unproject(); options.codemode?.suspend();
     reportCleanup({ kind: "attachment" }, combineCleanup([clearDecorations(), restoreChatMethods()]));
     throw error;
   }
   return Object.assign(() => {
     active = false;
+    observedChildren = [];
+    unproject(); options.codemode?.suspend();
     reportCleanup({ kind: "attachment" }, combineCleanup([clearDecorations(), restoreChatMethods()]));
   }, {
     targets: (): readonly DisclosureTarget[] => {
       const visible: DisclosureTarget[] = [];
       const groups = new Set<DisclosureTarget>();
-      for (const child of container.children) {
+      for (const child of sourceChildren()) {
         const target = isTool(child) ? decorations.get(child)?.target : undefined;
         if (!target) continue;
         const parent = target.parent;
         if (parent && !groups.has(parent)) { groups.add(parent); visible.push(parent); }
-        if (!parent || parent.expanded) visible.push(target);
+        if (!parent || parent.expanded) { visible.push(target); visible.push(...(isTool(child) ? scopes.get(child)?.targets() ?? [] : [])); }
       }
       return visible;
     },

@@ -11,10 +11,15 @@ A collapsed Read group, an expanded Edit group, [shell-session calls](docs/usage
   ▸ Edited src/defaults.ts (+1 -1) — Adjust defaults
 ▸ Ran npm test (exit 0) — Verify changes
 ▸ Checked output (exit 0)
-▸ Ran code read ×2, bash (3 nested calls) (1.2s)
+▸ Code source read ×2, bash (3 nested calls) (1.2s)
+▸ Read 2 calls
+▸ Ran npm test (0.4s)
+▸ Output
 ```
 
-Expand an individual call to see its original output. Read groups count files; mutation groups count calls, not unique files. Counts are shown only when usable evidence is available.
+Expand an individual call to see its original output. Read groups count known files, or calls when file information is unavailable. Mutation groups count calls, not unique files. Other counts are shown only when usable evidence is available.
+
+Native codemode defaults to separate source, activity and Output controls. Completed activity can use its original tool renderer when the live request/result can be identified; other activity retains recorded metadata. Choose **Display → Codemode → Original** for the aggregate view. [Codemode details and limits](docs/usage.md#codemode).
 
 Action labels follow the call's phase, such as `Run` → `Running` → `Ran`. Completed calls use the past tense even on failure; existing error colors and markers show the outcome. See [labels and status](docs/usage.md#counts-and-status).
 
