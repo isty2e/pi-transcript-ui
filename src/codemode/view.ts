@@ -30,6 +30,7 @@ export interface ItemToolkit {
 export interface SourceProjection {
   readonly items: boolean;
   readonly fallback: boolean;
+  readonly summaryRevision: number;
   readonly outcome: ParentOutcome | undefined;
   summary(phase: ToolPhase): CodemodeSummary;
   readonly body: Component & { readonly children: Component[] };
@@ -185,6 +186,7 @@ export class CodemodeScope implements Component, SourceProjection {
   get original(): NativeToolComponent { return this.binding.parent; }
   get isAttached(): boolean { return this.attached; }
   get outcome(): ParentOutcome | undefined { return this.binding.facts.outcome; }
+  get summaryRevision(): number { return this.revision; }
   summary(phase: ToolPhase): CodemodeSummary {
     return summarizeActivity(this.binding.facts.records, this.binding.facts.final ? "settled" : phase);
   }

@@ -129,14 +129,23 @@ export function styleLine(theme: RowTheme, parts: LineParts, error = false,
 
 /** text is a getter so the delegate's content fingerprint observes partial updates. */
 class SummaryRow implements Component {
+  private fitted: { width: number; text: string; line: string }[] = [];
   constructor(private readonly readText: (width?: number) => string, private readonly maxWidth = DEFAULT_DISPLAY_LIMITS.rowMaxWidth) {}
-  private textAt(width?: number): string { return this.readText(width).replace(/[\r\n\t]/g, " "); }
-  get text(): string { return truncateToWidth(this.textAt(this.maxWidth), this.maxWidth); }
+  private fit(width: number): string {
+    const text = this.readText(width).replace(/[\r\n\t]/g, " ");
+    const cached = this.fitted.find(entry => entry.width === width && entry.text === text);
+    if (cached) return cached.line;
+    const line = truncateToWidth(text, width);
+    this.fitted.unshift({ width, text, line });
+    this.fitted.length = Math.min(this.fitted.length, 2);
+    return line;
+  }
+  get text(): string { return this.fit(this.maxWidth); }
   render(width: number): string[] {
     const available = Math.max(0, Math.min(width, this.maxWidth));
-    return [truncateToWidth(this.textAt(available), available)];
+    return [this.fit(available)];
   }
-  invalidate(): void {}
+  invalidate(): void { this.fitted = []; }
 }
 
 class DisclosureGroup extends SummaryRow implements GroupRow {
@@ -161,22 +170,34 @@ class DisclosureGroup extends SummaryRow implements GroupRow {
 class ToolGroup extends DisclosureGroup {
   readonly members: NativeToolComponent[] = [];
   private readonly classifications = new Map<NativeToolComponent, ToolClassification>();
+  private revision = 0;
+  private busySnapshot: { revision: number; value: boolean } | undefined;
+  override invalidate(): void { this.revision++; this.busySnapshot = undefined; super.invalidate(); }
   addMember(tool: NativeToolComponent, classification: ToolClassification, inheritMemberExpansion = true): void {
     this.members.push(tool);
     this.classifications.set(tool, classification);
     if (inheritMemberExpansion) this.open ||= tool.expanded;
+    this.invalidate();
   }
-  resetMembers(): void { this.members.length = 0; this.classifications.clear(); }
+  resetMembers(): void { this.members.length = 0; this.classifications.clear(); this.invalidate(); }
   removeMember(tool: NativeToolComponent): void {
     const index = this.members.indexOf(tool);
     if (index >= 0) this.members.splice(index, 1);
     this.classifications.delete(tool);
+    this.invalidate();
   }
   constructor(id: number, readonly classification: ToolClassification,
     private readonly getCapability: (tool: NativeToolComponent) => FileCapabilities | undefined,
     private readonly getTheme: () => RowTheme, requestRender: () => void, maxWidth?: number,
     private readonly getParameters: (tool: NativeToolComponent) => unknown = tool => tool.toolDefinition?.parameters) {
-    super(`pi-transcript-ui:group:${id}`, () => this.summary(), () => this.members.some(m => phaseFor(m) !== "settled"), requestRender, maxWidth);
+    super(`pi-transcript-ui:group:${id}`, () => this.summary(), () => this.isBusy(), requestRender, maxWidth);
+  }
+  private isBusy(): boolean {
+    const revision = this.revision;
+    if (this.busySnapshot?.revision === revision) return this.busySnapshot.value;
+    const value = this.members.some(member => phaseFor(member) !== "settled");
+    this.busySnapshot = { revision, value };
+    return value;
   }
   private summary(): string {
     const members = this.members.map(tool => {
@@ -368,29 +389,57 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
   }
   let colorizer: ReturnType<typeof createCommandColorizer> | undefined;
   let projection: SourceProjection | undefined;
+  let summaryRevision = 0;
+  let summaries: { revision: number; width: number | undefined; intent: string | undefined; phase: ToolPhase;
+    sourceRevision: number | undefined; items: boolean; limits: string; home: string | undefined; parts: LineParts; isError: boolean;
+    command: string | undefined; durationMs: number | undefined }[] = [];
+  const dirtySummary = () => {
+    if (!active) return;
+    summaryRevision++; summaries = [];
+    row.invalidate(); group?.invalidate();
+  };
   const colorCommand = (command: CommandSpan, text: string, theme: RowTheme): string =>
     active ? (colorizer ??= createCommandColorizer()).format(command, text, theme) : text;
   const row = new SummaryRow((width) => {
+    const revision = summaryRevision;
     const indent = group && group.members.length > 1 ? "  " : "";
-    const layout = { limits: options.displayLimits ?? DEFAULT_DISPLAY_LIMITS, ...(width === undefined ? {} : { width: Math.max(0, width - indent.length) }) };
-    const display = displayFor(tool.toolName, tool.args, capability, capabilities.read, capabilities.patch);
+    const contentWidth = width === undefined ? undefined : Math.max(0, width - indent.length);
+    const limits = options.displayLimits ?? DEFAULT_DISPLAY_LIMITS;
+    const limitsKey = `${limits.rowMaxWidth}:${limits.commandMaxWidth}:${limits.intentMaxWidth}:${limits.commandPreview}:${limits.toolDuration}`;
+    const home = process.env["HOME"];
     const phase = phaseFor(tool);
     const intent = options.resolveIntent ? options.resolveIntent(tool.toolCallId, tool.args) : intentFromArgs(tool.args);
-    const shellSession = shellSessionFor(tool, capabilities, phase, parameters);
     const itemProjection = projection?.items ? projection : undefined;
+    const sourceRevision = itemProjection?.summaryRevision, items = itemProjection !== undefined;
+    const commandValue = tool.toolName === "bash" && isRecord(tool.args) ? tool.args.command : undefined;
+    const command = typeof commandValue === "string" ? commandValue : undefined;
+    const cacheable = items || (command !== undefined && !capabilities.mutation && !capabilities.read && !capabilities.patch && classification.operation !== "read");
     const outcome = itemProjection?.outcome;
     const isError = outcome?.isError ?? tool.result?.isError === true;
-    const code = itemProjection ? itemProjection.summary(phase) : display === null ? codemodeSummary({ toolName: tool.toolName, args: tool.args,
-      result: tool.result, phase }) : undefined;
-    const context = { intent, layout, durationMs: outcome ? outcome.durationMs : toolDurationMs(tool.result, tool.isPartial) };
-    const parts = shellSession ? shellSessionLine(shellSession, isError, phase, context)
-      : code ? codemodeLine({ summary: code, isError, ...context })
-      : phase === "settled"
-      ? settledLine({ toolName: tool.toolName, display, content: tool.result?.content,
-        isError, ...context,
-        metrics: summaryMetrics({ toolName: tool.toolName, args: tool.args, result: tool.result,
-          isPartial: false, classification, capabilities }) })
-      : runningLine(tool.toolName, display, intent, layout, phase);
+    const durationMs = outcome ? outcome.durationMs : toolDurationMs(tool.result, tool.isPartial);
+    let cachedSummary = cacheable ? summaries.find(entry => entry.revision === revision && entry.width === contentWidth &&
+      entry.intent === intent && entry.phase === phase && entry.sourceRevision === sourceRevision && entry.items === items &&
+      entry.limits === limitsKey && entry.home === home && entry.command === command && entry.isError === isError && entry.durationMs === durationMs) : undefined;
+    if (!cachedSummary) {
+      const layout = { limits, ...(contentWidth === undefined ? {} : { width: contentWidth }) };
+      const display = displayFor(tool.toolName, tool.args, capability, capabilities.read, capabilities.patch);
+      const shellSession = shellSessionFor(tool, capabilities, phase, parameters);
+      const code = itemProjection ? itemProjection.summary(phase) : display === null ? codemodeSummary({ toolName: tool.toolName, args: tool.args,
+        result: tool.result, phase }) : undefined;
+      const context = { intent, layout, durationMs };
+      const parts = shellSession ? shellSessionLine(shellSession, isError, phase, context)
+        : code ? codemodeLine({ summary: code, isError, ...context })
+        : phase === "settled"
+        ? settledLine({ toolName: tool.toolName, display, content: tool.result?.content,
+          isError, ...context,
+          metrics: summaryMetrics({ toolName: tool.toolName, args: tool.args, result: tool.result,
+            isPartial: false, classification, capabilities }) })
+        : runningLine(tool.toolName, display, intent, layout, phase);
+      cachedSummary = { revision, width: contentWidth, intent, phase, sourceRevision, items, limits: limitsKey, home, parts, isError, command, durationMs };
+      if (cacheable) { summaries.unshift(cachedSummary); summaries.length = Math.min(summaries.length, 2); }
+      else summaries = [];
+    }
+    const { parts } = cachedSummary;
     if (isError || !parts.command) colorizer?.clear();
     return `${indent}${styleLine(options.getTheme(), { ...parts, rest: `${parts.rest}${projection?.fallback ? " (original)" : ""}`,
       ...(itemProjection ? { action: "Code source" } : {}), marker: tool.expanded ? "▾" : "▸" }, isError, colorCommand)}`;
@@ -427,20 +476,22 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
       : projectedChildren().flatMap((child) => child.render(width));
   };
   const update = () => {
+    dirtySummary();
     native(() => originalUpdate.call(tool));
     if (active && nativeDepth === 0) {
       try { onUpdate?.(); projection?.changed(); }
       catch (error) { onFailure(error, release()); }
     }
   };
-  const invalidate = () => { native(() => originalInvalidate.call(tool)); if (active) projection?.changed(); };
+  const invalidate = () => { dirtySummary(); native(() => originalInvalidate.call(tool)); if (active) projection?.changed(); };
   const changedData = () => {
     if (!active) return;
+    dirtySummary();
     try { onUpdate?.(); projection?.observe(); }
     catch (error) { onFailure(error, release()); }
   };
-  const updateArgs: NativeToolComponent["updateArgs"] = args => { native(() => originalArgs.call(tool, args)); changedData(); };
-  const updateResult: NativeToolComponent["updateResult"] = (result, partial) => { native(() => originalResult.call(tool, result, partial)); changedData(); };
+  const updateArgs: NativeToolComponent["updateArgs"] = args => { dirtySummary(); native(() => originalArgs.call(tool, args)); changedData(); };
+  const updateResult: NativeToolComponent["updateResult"] = (result, partial) => { dirtySummary(); native(() => originalResult.call(tool, result, partial)); changedData(); };
   const mouse: NonNullable<Component["handleMouse"]> = (event) => {
     if (!active || nativeDepth > 0) return native(() => originalMouse?.call(tool, event));
     if (projection?.items && !projection.current(event.width)) { options.requestRender(); return { handled: true }; }
@@ -479,6 +530,7 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
   const installed = new Map<string, PropertyDescriptor>();
   function release(): CleanupOutcome {
     active = false;
+    summaries = []; row.invalidate();
     const outcomes = [attemptCleanup("command colorizer", () => colorizer?.clear())];
     for (const [key, expected] of installed) {
       outcomes.push(restoreIfOwned(tool, key, expected, () => restoreDescriptor(tool, key, descriptors.get(key))));
@@ -498,8 +550,8 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
     const cleanup = release();
     return cleanup.kind === "complete" ? { kind: "native", error } : { kind: "cleanup-incomplete", error, cleanup };
   }
-  return { kind: "decorated", binding: { toolName, target, get group() { return group; }, setGroup(next) { group = next; },
-    setClassification(next) { classification = next; }, setProjection(next) { projection = next; }, release } };
+  return { kind: "decorated", binding: { toolName, target, get group() { return group; }, setGroup(next) { group = next; dirtySummary(); },
+    setClassification(next) { classification = next; dirtySummary(); }, setProjection(next) { projection = next; dirtySummary(); }, release } };
 }
 
 /** Attach to the actual chat container without owning the editor or footer. */
