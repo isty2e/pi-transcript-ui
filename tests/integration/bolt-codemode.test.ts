@@ -20,10 +20,10 @@ it.skipIf(!binary)("projects codemode items through Pi-Bolt's native mode, rende
     run.child.stdin?.end();
     await run;
     const result = JSON.parse(await readFile(report, "utf8")) as {
-      ok: boolean; version: string; cases: string[]; executed?: number; terminalStarts?: number; terminalWrites?: number; error?: string; stack?: string;
+      ok: boolean; version: string; cases: string[]; executed?: number; vmExecutions?: number; terminalStarts?: number; terminalWrites?: number; error?: string; stack?: string;
     };
-    expect(result, result.stack ?? result.error).toMatchObject({ ok: true, executed: 0, terminalStarts: 0, terminalWrites: 0 });
-    expect(result.cases).toHaveLength(3);
-    console.info(`Pi-Bolt codemode: SDK ${result.version}; ${result.cases.length} native-mode/renderer/lifecycle cases; no tool execution`);
+    expect(result, result.stack ?? result.error).toMatchObject({ ok: true, executed: 0, vmExecutions: 1, terminalStarts: 0, terminalWrites: 0 });
+    expect(result.cases).toHaveLength(4);
+    console.info(`Pi-Bolt codemode: SDK ${result.version}; ${result.cases.length} native-mode/renderer/lifecycle cases; one pure VM execution, no nested tool execution`);
   } finally { await rm(directory, { recursive: true, force: true }); }
 }, 100_000);

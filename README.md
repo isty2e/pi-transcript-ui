@@ -11,15 +11,18 @@ A collapsed Read group, an expanded Edit group, [shell-session calls](docs/usage
   ▸ Edited src/defaults.ts (+1 -1) — Adjust defaults
 ▸ Ran npm test (exit 0) — Verify changes
 ▸ Checked output (exit 0)
-▸ Code source read ×2, bash (3 nested calls) (1.2s)
+▾ Ran code read ×2, bash (3 nested calls) (1.2s)
+  ▸ Source
   ▸ Read 2 calls
   ▸ Ran npm test (0.4s)
-  ▸ Output
+  ▸ Script output
 ```
 
 Expand an individual call to see its original output. Read groups count known files, or calls when file information is unavailable. Mutation groups count calls, not unique files. Other counts are shown only when usable evidence is available.
 
-Native codemode defaults to separate source, activity and Output controls. Only activity/group/Output headings are indented; expanded bodies keep their original width and indentation. Choose **Display → Codemode → Independent items (flat)** to remove that extra level, or **Original** for the aggregate view. Completed activity can use its original tool renderer when the live request/result can be identified; other activity retains recorded metadata. [Codemode details and limits](docs/usage.md#codemode).
+Native codemode's execution row folds the whole container. Inside it, Source, activities and Script output have independent controls. Their headings are indented; expanded bodies keep their original width and indentation. Choose **Display → Codemode → Independent items (flat)** to remove that extra level, or **Original** for the aggregate view. Completed activity can use its original tool renderer when the live request/result can be identified; other activity retains recorded metadata. [Codemode details and limits](docs/usage.md#codemode).
+
+Script output can unfold into individual text, return-value, console and image items. When live output tracing is unavailable, a complete sequence of standalone `==> text 1/N <==` through `==> text N/N <==` markers provides foldable display sections instead. These sections retain their original text and do not assign output to tools; incomplete or ambiguous numbering stays combined.
 
 Action labels follow the call's phase, such as `Run` → `Running` → `Ran`. Completed calls use the past tense even on failure; existing error colors and markers show the outcome. See [labels and status](docs/usage.md#counts-and-status).
 

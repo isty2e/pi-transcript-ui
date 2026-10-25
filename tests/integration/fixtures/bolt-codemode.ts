@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AgentSessionRuntime, InteractiveMode, ModelRuntime, SessionManager, SettingsManager, VERSION,
   createAgentSessionServices, createAgentSessionFromServices, createCodemodeExtension,
-  type ExtensionAPI, type ExtensionFactory } from "@earendil-works/pi-coding-agent";
+  type ExtensionAPI, type ExtensionContext, type ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Container, MouseRegion, Text, stripTerminalSequences, type Component, type Terminal } from "@earendil-works/pi-tui";
 import { attachTranscriptPresentation, type NativeToolComponent } from "../../../src/wiring.js";
 import { CodemodeRuntime } from "../../../src/codemode/pi.js";
@@ -30,11 +30,13 @@ export default function codemodeFixture(pi: ExtensionAPI) {
     let mode: InteractiveMode | undefined, detach: ReturnType<typeof attachTranscriptPresentation> | undefined;
     let layout: DisplayLimits["codemode"] = "items", ownSource = false, executed = 0, requests = 0;
     let terminalStarts = 0, terminalWrites = 0, invalidateChild: (() => void) | undefined;
+    let fixtureContext: ExtensionContext | undefined, vmExecutions = 0;
 
     try {
       const fixture: ExtensionFactory = api => {
         runtime = new CodemodeRuntime(api, () => layout);
         api.on("session_start", async (_event, ctx) => {
+          fixtureContext = ctx;
           runtime!.start(ctx);
           await ctx.ui.custom((tui, _theme, _keys, done) => {
             runtime!.setRoot(tui); done(null); return new Text("", 0, 0);
@@ -72,7 +74,8 @@ export default function codemodeFixture(pi: ExtensionAPI) {
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
       ({ session } = await createAgentSessionFromServices({ services, sessionManager: SessionManager.inMemory(context.cwd),
         model, tools: ["codemode", "fixture_child"] }));
-      session.getToolDefinition("codemode")!.execute = async () => { executed++; throw new Error("Fixture must not execute codemode"); };
+      const codeDefinition = session.getToolDefinition("codemode")!, originalExecute = codeDefinition.execute;
+      codeDefinition.execute = async () => { executed++; throw new Error("Display-only cases must not execute codemode"); };
       const owner = new AgentSessionRuntime(session, services, async () => { throw new Error("Fixture must not replace the session"); });
       const terminal: Terminal = { columns: 100, rows: 40, kittyProtocolActive: false,
         start() { terminalStarts++; }, stop() {}, drainInput: async () => {}, write() { terminalWrites++; }, moveBy() {},
@@ -112,10 +115,13 @@ export default function codemodeFixture(pi: ExtensionAPI) {
         await finishParent(id);
         const folded = render();
         assert.equal(runtime!.mode(), mode, "The real mode must be discovered, not a fixture mode record");
-        assert.equal(detach.targets().length, 3, "Original fallback must not count as item coverage");
+        assert.equal(detach.targets().length, 1, "The folded execution parent must hide every section");
         assert.ok(!folded.includes(" (original)"));
         assert.ok(!folded.includes("CHILD BODY") && !folded.includes("SCRIPT OUTPUT"));
-        const [source, child, script] = detach.targets();
+        const execution = detach.targets()[0]!;
+        execution.setExpanded(true); render();
+        assert.equal(detach.targets().length, 4, "Original fallback must not count as item coverage");
+        const [, source, child, script] = detach.targets();
         child!.setExpanded(true); script!.setExpanded(true);
         assert.ok(render().includes("CHILD BODY") && render().includes("SCRIPT OUTPUT"));
         source!.setExpanded(true);
@@ -133,6 +139,11 @@ export default function codemodeFixture(pi: ExtensionAPI) {
         source!.setExpanded(false);
         assert.ok(render().includes("CHILD BODY") && render().includes("SCRIPT OUTPUT"));
         source!.setExpanded(true);
+        execution.setExpanded(false);
+        assert.ok(!render().includes("CHILD BODY") && !render().includes("SCRIPT OUTPUT"));
+        assert.equal(detach.targets().length, 1);
+        execution.setExpanded(true);
+        assert.ok(render().includes("CHILD BODY") && render().includes("SCRIPT OUTPUT"));
         detach(); layout = "native"; detach = attach();
         const original = render();
         assert.equal(detach.targets().length, 1);
@@ -140,7 +151,7 @@ export default function codemodeFixture(pi: ExtensionAPI) {
         assert.ok(original.includes("SOURCE-CODE"));
         detach(); layout = "items"; detach = attach();
         const restored = render();
-        assert.equal(detach.targets().length, 3);
+        assert.equal(detach.targets().length, 4);
         assert.ok(restored.includes("SOURCE-CODE") && restored.includes("CHILD BODY") && restored.includes("SCRIPT OUTPUT"));
         assert.ok(!restored.includes("ORIGINAL BODY"));
         const bodies = () => detach!.targets().slice(1).map(target =>
@@ -166,6 +177,36 @@ export default function codemodeFixture(pi: ExtensionAPI) {
         cases.push(`${id}: independent items, native dispatch, source state, layout round-trip and removal fencing`);
       }
 
+      // Exercise the real registered executor separately from the display-only event fixtures.
+      codeDefinition.execute = originalExecute;
+      assert.ok(fixtureContext);
+      runtime!.start(fixtureContext); runtime!.setRoot(access.ui);
+      const code = "text('FIRST'); console.log('NOTE'); return 'RETURN';";
+      await emit({type: "tool_execution_start", toolName: "codemode", toolCallId: "vm-output", args: {code}});
+      const tool = session.agent.state.tools.find(tool => tool.name === "codemode");
+      assert.ok(tool);
+      const updates: Promise<void>[] = [];
+      vmExecutions++;
+      const final = await tool.execute("vm-output", {code}, undefined, partial => {
+        updates.push(emit({type: "tool_execution_update", toolName: "codemode", toolCallId: "vm-output", partialResult: partial}));
+      });
+      await Promise.all(updates);
+      await emit({type: "tool_execution_end", toolName: "codemode", toolCallId: "vm-output", isError: final.isError === true, result: final});
+      render();
+      detach.targets()[0]!.setExpanded(true); render();
+      const outputSection = detach.targets().at(-1)!;
+      assert.ok(outputSection.label.includes("3 items"), "The real registry path must retain witnessed return and console roles");
+      outputSection.setExpanded(true); render();
+      const outputs = detach.targets().filter(target => target.parent === outputSection);
+      assert.equal(outputs.length, 3);
+      assert.ok(outputs[0]!.label.includes("Text 1"));
+      assert.ok(outputs[1]!.label.includes("Return value"));
+      assert.ok(outputs[2]!.label.includes("Console output"));
+      outputs[0]!.setExpanded(true);
+      assert.ok(render().split("\n").some(line => line.trim() === "FIRST"));
+      access.chatContainer.clear(); render();
+      cases.push("actual registered native executor: witnessed text/return/console and independent output disclosure");
+
       await emit({ type: "tool_execution_start", toolName: "codemode", toolCallId: "unsupported", args: { code: "return 'SOURCE-CODE'" } });
       await finishParent("unsupported");
       runtime!.setRoot(new Container());
@@ -182,7 +223,7 @@ export default function codemodeFixture(pi: ExtensionAPI) {
       assert.equal(session.messages.length, 0);
       assert.equal(terminalStarts, 0); assert.equal(terminalWrites, 0);
       cases.push("unavailable host uses Original; shutdown rejects late callbacks/events");
-      writeFileSync(output, JSON.stringify({ ok: true, version: VERSION, cases, executed, terminalStarts, terminalWrites }));
+      writeFileSync(output, JSON.stringify({ ok: true, version: VERSION, cases, executed, vmExecutions, terminalStarts, terminalWrites }));
     } catch (error) {
       writeFileSync(output, JSON.stringify({ ok: false, version: VERSION, cases, error: String(error), stack: error instanceof Error ? error.stack : undefined }));
     } finally {

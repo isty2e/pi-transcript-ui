@@ -145,11 +145,20 @@ it("summarizes actual host execution, progress and persisted results without rep
       const label = row();
       const items = stripTerminalSequences(itemsChat.render(120).join("\n"));
       if (scenario.statuses) {
-        expect(items).toContain("Code source");
-        expect(itemsDetach!.targets().length).toBeGreaterThanOrEqual(3);
+        const targets = itemsDetach!.targets();
+        expect(targets.length).toBeGreaterThanOrEqual(3);
+        expect(targets[0]!.label).toContain("Ran code");
+        expect(targets[1]!.label).toContain("Source");
+        expect(targets[1]!.parent).toBe(targets[0]);
         expect(items).not.toContain("Detailed result unavailable");
-        itemsParent!.setExpanded(false);
+        targets[1]!.setExpanded(false);
         expect(stripTerminalSequences(itemsChat.render(120).join("\n"))).toContain("OK");
+        const flags = targets.slice(1).map(target => target.expanded);
+        targets[0]!.setExpanded(false);
+        expect(stripTerminalSequences(itemsChat.render(120).join("\n"))).not.toContain("OK");
+        expect(itemsDetach!.targets()).toEqual([targets[0]]);
+        targets[0]!.setExpanded(true); itemsChat.render(120);
+        expect(targets.slice(1).map(target => target.expanded)).toEqual(flags);
       } else expect(itemsDetach!.targets()).toHaveLength(1);
       expect(label).not.toContain("lines)");
       expect(label.includes("— error")).toBe(scenario.isError);

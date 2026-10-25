@@ -1,15 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { types } from "node:util";
 import { Worker } from "node:worker_threads";
-
-export type ObservedOutputItem =
-  | { readonly type: "text"; readonly text: string; readonly console?: true }
-  | { readonly type: "image"; readonly data: string; readonly mimeType: string };
-
-export interface OutputWitness {
-  readonly items: readonly ObservedOutputItem[];
-  readonly terminal: { readonly ok: true; readonly value?: string } | { readonly ok: false; readonly error: string };
-}
+import type { ObservedOutputItem, OutputWitness } from "./output.js";
+export type { ObservedOutputItem, OutputWitness } from "./output.js";
 
 type Completion = (witness: OutputWitness | undefined) => void;
 type Claim = (toolCallId: string) => Completion | undefined;
@@ -30,7 +23,7 @@ function descriptorInChain(target: object, key: string): PropertyDescriptor | un
 }
 
 function fields(value: unknown): Record<string, PropertyDescriptor> {
-  if (value === null || typeof value !== "object") throw new Error();
+  if (value === null || typeof value !== "object" || types.isProxy(value)) throw new Error();
   const prototype = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) throw new Error();
   const descriptors = Object.getOwnPropertyDescriptors(value);
@@ -66,10 +59,10 @@ function terminal(message: Record<string, PropertyDescriptor>): OutputWitness["t
       if (!Number.isSafeInteger(value[key]?.value) || value[key]!.value < 0) throw new Error();
     }
   }
-  if (message.ok?.value === true && typeof message.writes?.value === "string" && message.value &&
-      (message.value.value === undefined || typeof message.value.value === "string")) {
+  if (message.ok?.value === true && typeof message.writes?.value === "string" &&
+      (!message.value || message.value.value === undefined || typeof message.value.value === "string")) {
     only(message, ["type", "ok", "value", "writes", "during"]);
-    return Object.freeze(message.value.value === undefined ? { ok: true } : { ok: true, value: message.value.value });
+    return Object.freeze(message.value?.value === undefined ? { ok: true } : { ok: true, value: message.value.value });
   }
   if (message.ok?.value === false && typeof message.error?.value === "string") {
     only(message, ["type", "ok", "error", "during"]);
@@ -189,7 +182,7 @@ function workerWrapper(state: State, original: Callable): Callable {
     if (capture && !capture.closed && args[0] === "message") {
       try {
         // EventEmitter.once() registers an internal wrapper with a .listener property. Leave it untouched.
-        if (this instanceof Worker && typeof listener === "function" &&
+        if (this instanceof Worker && typeof listener === "function" && !types.isProxy(listener) &&
             !descriptorInChain(listener, "listener")) {
           const prior = state.workers.get(this);
           if (prior) {
@@ -223,7 +216,7 @@ export class CodemodeOutputObserver {
   }
 
   watch(definition: object): boolean {
-    if (!this.state.active) return false;
+    if (!this.state.active || types.isProxy(definition)) return false;
     try {
       const prior = this.definitions.get(definition);
       if (prior) return sameDescriptor(Object.getOwnPropertyDescriptor(definition, "execute"), prior.installed) &&

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { InteractiveMode, AssistantMessageComponent, ToolExecutionComponent, createReadTool, createBashTool, initTheme,
-  type ExtensionAPI, type ExtensionContext, type ToolRenderers } from "@earendil-works/pi-coding-agent";
+import { InteractiveMode, AssistantMessageComponent, ToolExecutionComponent, createReadTool, createBashTool, createCodemodeExtension, initTheme,
+  type ExtensionAPI, type ExtensionContext, type ToolDefinition, type ToolRenderers } from "@earendil-works/pi-coding-agent";
 import { Container, MouseRegion, Text, stripTerminalSequences, visibleWidth, getCapabilities, setCapabilities, type Component } from "@earendil-works/pi-tui";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -10,6 +10,7 @@ import { CodemodePresentation } from "../../src/codemode/view.js";
 import { defaultSettings } from "../../src/settings.js";
 import type { DisplayLimits } from "../../src/display.js";
 import { ToolNavigation } from "../../src/navigation.js";
+import { theme } from "../fixtures/pi-theme.js";
 initTheme("dark", false);
 const cleanups: (() => void)[] = [];
 const isImageLine = (line: string) => line.includes("\x1b_G");
@@ -18,8 +19,8 @@ const header = { type: "text" as const, text: "Script completed\nWall time 0.1 s
 const call = (id: string, name = "read", status = "ok") => ({ id, name, status, args: '{"path":"preview' });
 const result = (calls: unknown[], text?: string) => ({ content: [header, ...(text === undefined ? [] : [{ type: "text" as const, text }])], details: { calls }, isError: false });
 
-function fixture(options: { expanded?: boolean; oldId?: string; child?: ToolRenderers; accessorChildren?: boolean; codemodeRegistered?: boolean;
-  layout?: DisplayLimits["codemode"]; groupCodemode?: boolean } = {}) {
+function fixture(options: { expanded?: boolean; containerExpanded?: boolean; colored?: boolean; oldId?: string; child?: ToolRenderers; accessorChildren?: boolean; codemodeRegistered?: boolean;
+  layout?: DisplayLimits["codemode"]; groupCodemode?: boolean; nativeCode?: boolean; output?: ToolRenderers } = {}) {
   const handlers = new Map<string, ((event: Record<string, unknown>) => void)[]>();
   const root = new Container(), chat = new Container(); root.addChild(chat);
   const accessorChildren = (container: Container) => {
@@ -46,8 +47,14 @@ function fixture(options: { expanded?: boolean; oldId?: string; child?: ToolRend
     renderResult(value) { return new Text(`ORIGINAL-AGGREGATE\n${value.content.filter(block => block.type === "text").map(block => block.text).join("\n")}`, 0, 0); },
   };
   const codeParameters = { type: "object", properties: { code: { type: "string" } }, required: ["code"] };
-  const definitions = new Map([
-    ["codemode", { name: "codemode", parameters: codeParameters, ...sourceRender }],
+  let builtin: ToolDefinition | undefined;
+  if (options.nativeCode) createCodemodeExtension({models: false, mode: "on"})({
+    registerTool: (value: ToolDefinition) => { if (value.name === "codemode") builtin = value; },
+    getAllTools: () => [], getSettings: () => ({}), appendEntry: () => { throw new Error("Unexpected storage mutation"); },
+  } as unknown as ExtensionAPI);
+  const codeDefinition = {name: "codemode", parameters: codeParameters, ...sourceRender, execute: builtin?.execute};
+  const definitions = new Map<string, ToolRenderers & {name: string; parameters: unknown}>([
+    ["codemode", codeDefinition],
     ["read", { name: "read", parameters: createReadTool("/tmp").parameters, ...(options.child ?? {}) }],
     ["bash", { name: "bash", parameters: createBashTool("/tmp").parameters }],
   ]);
@@ -68,7 +75,7 @@ function fixture(options: { expanded?: boolean; oldId?: string; child?: ToolRend
     settingsManager: { getShowImages: () => showImages, getImageWidthCells: () => 60 },
     session: { getToolDefinition: (name: string) => definitions.get(name), extensionRunner: {
       resolveToolRenderers(name: string, base: () => ToolRenderers | undefined) {
-        return name === "pi-transcript-ui:codemode-output" ? { renderResult: genericResult } : base();
+        return name === "pi-transcript-ui:codemode-output" ? options.output ?? { renderResult: genericResult } : base();
       },
     } },
     getRegisteredToolDefinition(name: string): ToolRenderers | undefined {
@@ -79,7 +86,7 @@ function fixture(options: { expanded?: boolean; oldId?: string; child?: ToolRend
   const definition = mode.getRegisteredToolDefinition("codemode");
   const presentation = new CodemodePresentation(runtime);
   const attach = () => attachTranscriptPresentation(root, {
-    getTheme: () => ({ bold: (s: string) => s, fg: (_kind, s: string) => s }), requestRender: requests,
+    getTheme: () => options.colored ? theme : ({ bold: (s: string) => s, fg: (_kind, s: string) => s }), requestRender: requests,
     displayLimits: { ...defaultSettings().display, codemode: layout }, codemode: presentation,
     ...(options.groupCodemode ? { rules: { codemode: "read" as const } } : {}),
     resolveParameters: name => definitions.get(name)?.parameters,
@@ -87,7 +94,8 @@ function fixture(options: { expanded?: boolean; oldId?: string; child?: ToolRend
   let detach = attach();
   const parent = new ToolExecutionComponent("codemode", "p", { code: "USER-CODE" }, { outputPad: pad }, definition, { requestRender: requests } as never, "/tmp");
   accessorChildren(parent);
-  parent.setExpanded(options.expanded ?? false); chat.addChild(parent);
+  // Most cases inspect children of an already opened container; item defaults remain native.
+  parent.setExpanded(options.containerExpanded ?? true); chat.addChild(parent);
   const emit = (type: string, event: Record<string, unknown>) => { for (const handler of handlers.get(type) ?? []) handler(event); };
   const start = () => emit("tool_execution_start", { toolCallId: "p", toolName: "codemode", args: { code: "USER-CODE" } });
   const nestedStart = (id: string, name = "read", args: unknown = { path: "/tmp/file.ts" }) =>
@@ -98,6 +106,19 @@ function fixture(options: { expanded?: boolean; oldId?: string; child?: ToolRend
   const render = () => chat.render(100).map(stripTerminalSequences).join("\n");
   cleanups.push(() => { detach(); presentation.dispose(); runtime.shutdown(); });
   return { root, chat, parent, runtime, presentation, requests, emit, start, nestedStart, nestedEnd, render, mode, genericResult,
+    async run(code: string, beforeEnd?: () => void, beforeDisplay?: () => void) {
+      if (!codeDefinition.execute) throw new Error("Native executor unavailable");
+      parent.updateArgs({code}); start();
+      const context = {tools: [], sessionManager: {getBranch: () => []},
+        executeTool: () => { throw new Error("Unexpected nested tool"); }} as unknown as Parameters<ToolDefinition["execute"]>[4];
+      const native = await codeDefinition.execute("p", {code}, undefined,
+        update => parent.updateResult({...update, isError: update.isError === true}, true), context);
+      beforeEnd?.();
+      emit("tool_execution_end", {toolCallId: "p", toolName: "codemode", result: native, isError: native.isError === true});
+      beforeDisplay?.();
+      parent.updateResult({...native, isError: native.isError === true}, false);
+      return native;
+    },
     tool(name: string, id: string, args: unknown) {
       return new ToolExecutionComponent(name, id, args, { outputPad: pad }, mode.getRegisteredToolDefinition(name),
         { requestRender: requests } as never, "/tmp");
@@ -110,6 +131,231 @@ function fixture(options: { expanded?: boolean; oldId?: string; child?: ToolRend
 }
 
 describe("independent native codemode items", () => {
+  it("observes the actual registered executor before the first frame and discloses only selected output bodies", async () => {
+    const h = fixture({nativeCode: true, containerExpanded: false});
+    await h.run("text('A'); text('B'); console.log('C'); return {value:2};");
+    h.render(); expect(h.targets()).toHaveLength(1);
+    h.targets()[0]!.setExpanded(true); h.render();
+    const [parent, source, output] = h.targets();
+    expect(output!.label).toContain("4 items");
+    expect(h.genericResult).not.toHaveBeenCalled();
+    output!.setExpanded(true); h.render();
+    const members = h.targets().filter(target => target.parent === output);
+    expect(members.map(target => target.label)).toEqual([
+      "    ▸ Text 1 — A", "    ▸ Text 2 — B", "    ▸ Return value — {\"value\":2}", "    ▸ Console output — C",
+    ]);
+    expect(members.every(target => !target.expanded)).toBe(true);
+    expect(h.genericResult).not.toHaveBeenCalled();
+    members[0]!.setExpanded(true); h.render();
+    expect(h.genericResult.mock.calls.at(-1)![0].content).toEqual([{type: "text", text: "A"}]);
+    expect(h.genericResult.mock.calls.every(([value]) => value.content.every(block => block.text === "A"))).toBe(true);
+    output!.setExpanded(false); h.render(); expect(h.targets()).toEqual([parent, source, output]);
+    output!.setExpanded(true); h.render(); expect(members[0]!.expanded).toBe(true);
+    parent!.setExpanded(false); h.render(); expect(h.targets()).toEqual([parent]);
+    parent!.setExpanded(true); h.render(); expect(h.targets().filter(target => target.parent === output)).toEqual(members);
+    for (const width of [1, 2, 3, 12, 40]) expect(h.chat.render(width).every(line => visibleWidth(line) <= width)).toBe(true);
+  });
+
+  it("uses complete printed numbering without runtime tracing and leaves malformed numbering combined", () => {
+    const h = fixture({layout: "flat"});
+    h.parent.updateResult(result([], "==> text 1/2 <==\nA\n==> text 2/2 <==\nB"), false); h.render();
+    const section = h.targets().at(-1)!;
+    expect(section.label).toBe("▸ Script output (2 sections)");
+    section.setExpanded(true); h.render();
+    const members = h.targets().filter(target => target.parent === section);
+    expect(members.map(target => target.label)).toEqual(["  ▸ Output 1/2 — A", "  ▸ Output 2/2 — B"]);
+    members[1]!.setExpanded(true); h.render();
+    expect(h.genericResult.mock.calls.at(-1)![0].content).toEqual([{type: "text", text: "==> text 2/2 <==\nB"}]);
+
+    const malformed = fixture();
+    const original = "==> text 1/3 <==\nA\n==> text 3/3 <==\nC";
+    malformed.parent.updateResult(result([], original), false); malformed.render();
+    expect(malformed.targets().at(-1)!.label).toBe("  ▸ Script output");
+    malformed.targets().at(-1)!.setExpanded(true); malformed.render();
+    expect(malformed.genericResult.mock.calls.at(-1)![0].content).toEqual([{type: "text", text: original}]);
+  });
+
+  it("keeps terminal controls and empty decorative separators out of collapsed output headings", async () => {
+    const h = fixture({nativeCode: true});
+    const payload = "\x1b]52;c;U0VDUkVU\x07\x1b[2JVISIBLE";
+    await h.run(`text(${JSON.stringify(payload)}); text('\\r\\t');`); h.render();
+    const output = h.targets().at(-1)!;
+    output.setExpanded(true); h.render();
+    const rendered = h.chat.render(100).join("\n");
+    expect(rendered).not.toContain("\x1b]52;");
+    expect(rendered).not.toContain("\x1b[2J");
+    const members = h.targets().filter(target => target.parent === output);
+    expect(members[0]!.label).toContain("VISIBLE");
+    expect(members[1]!.label.trim()).toBe("▸ Text 2");
+    expect(h.genericResult).not.toHaveBeenCalled();
+    members[0]!.setExpanded(true); h.render();
+    expect(h.genericResult.mock.calls.at(-1)![0].content).toEqual([{type: "text", text: payload}]);
+  });
+
+  it("applies native bulk defaults and image/padding settings to lazy output members", async () => {
+    const h = fixture({nativeCode: true, expanded: true, output: {
+      renderResult(_value, _options, _theme, ctx) { return new Text(`CTX:${ctx.outputPad}:${ctx.showImages}`, 0, 0); },
+    }});
+    h.padding(2); h.showImages(false);
+    await h.run("text('A'); text('B');"); h.render();
+    expect(h.targets().every(target => target.expanded)).toBe(true);
+    const output = h.targets().find(target => target.label.includes("Script output"))!;
+    const members = h.targets().filter(target => target.parent === output);
+    expect(members).toHaveLength(2);
+    expect(h.render().split("\n").filter(line => line.trim() === "CTX:2:false")).toHaveLength(2);
+    const scope = h.chat.children[0] as Component & {setExpanded(value: boolean): void};
+    scope.setExpanded(false); h.render(); expect(h.targets()).toHaveLength(1);
+    scope.setExpanded(true); h.render(); expect(h.targets().every(target => target.expanded)).toBe(true);
+    h.padding(0); h.showImages(true); h.render();
+    expect(h.render().split("\n").filter(line => line.trim() === "CTX:0:true")).toHaveLength(2);
+  });
+
+  it("preserves renderer-local controls per output member and fences callbacks after removal", async () => {
+    const invalidations: (() => void)[] = [];
+    const h = fixture({nativeCode: true, output: {renderShell: "self",
+      renderResult(value, _options, _theme, ctx) {
+        invalidations.push(ctx.invalidate);
+        const payload = value.content.filter(block => block.type === "text").map(block => block.text).join("");
+        return new MouseRegion(new Text(`${payload} CONTROL ${ctx.state.detail ? "ON" : "OFF"}`, 0, 0), event => {
+          if (event.type !== "click") return undefined;
+          ctx.state.detail = !ctx.state.detail; ctx.invalidate(); return {handled: true};
+        });
+      },
+    }});
+    await h.run("text('A'); text('B');"); h.render();
+    const parent = h.targets()[0]!, output = h.targets().at(-1)!;
+    output.setExpanded(true); h.render();
+    const members = h.targets().filter(target => target.parent === output);
+    for (const member of members) member.setExpanded(true);
+    h.render();
+    const component = members[0] as unknown as Component;
+    const lines = component.render(100).map(stripTerminalSequences), y = lines.findIndex(line => line.includes("A CONTROL OFF"));
+    expect(y).toBeGreaterThan(0);
+    component.handleMouse?.({type: "click", button: "left", x: 0, y, width: 100, height: lines.length,
+      screenX: 0, screenY: y, shift: false, alt: false, ctrl: false});
+    expect(h.render()).toContain("A CONTROL ON"); expect(h.render()).toContain("B CONTROL OFF");
+    parent.setExpanded(false); h.render(); parent.setExpanded(true);
+    expect(h.render()).toContain("A CONTROL ON"); expect(h.render()).toContain("B CONTROL OFF");
+    const stale = invalidations.at(-1)!;
+    h.chat.children = []; h.render();
+    const before = h.requests.mock.calls.length;
+    stale();
+    expect(h.requests).toHaveBeenCalledTimes(before);
+    expect(h.targets()).toEqual([]);
+  });
+
+  it("keeps native-only output intact and can use formatted regions when later switched to items", async () => {
+    const h = fixture({nativeCode: true, layout: "native"});
+    await h.run("text('A'); text('B');");
+    expect(h.render()).toContain("ORIGINAL-AGGREGATE");
+    expect(h.genericResult).not.toHaveBeenCalled();
+    h.layout("items"); h.render();
+    expect(h.targets().at(-1)!.label).toContain("2 sections");
+  });
+
+  it.each(["before-end", "before-display"])("rejects staged observation when the parent becomes ambiguous %s", async when => {
+    const h = fixture({nativeCode: true});
+    const duplicateParent = () => {
+      const duplicate = new ToolExecutionComponent("codemode", "p", {code: "OTHER"}, {showImages: true, imageWidthCells: 60},
+        h.mode.getRegisteredToolDefinition("codemode"), {requestRender: h.requests} as never, "/tmp");
+      duplicate.updateResult(result([]), true); h.chat.addChild(duplicate); h.runtime.bind(duplicate as unknown as NativeToolComponent);
+    };
+    await h.run("text('A'); console.log('C'); return 'B';", when === "before-end" ? duplicateParent : undefined,
+      when === "before-display" ? duplicateParent : undefined);
+    h.render();
+    const output = h.targets().find(target => target.label.includes("Script output"))!;
+    expect(output.label).toContain("2 sections");
+    expect(output.label).not.toContain("3 items");
+  });
+
+  it("does not pass incomplete appearance settings into cached bodies when the host is unavailable", async () => {
+    const preferences: {pad: number; images: boolean}[] = [];
+    const h = fixture({nativeCode: true, expanded: true, output: {
+      renderResult(_value, _options, _theme, ctx) {
+        preferences.push({pad: ctx.outputPad, images: ctx.showImages}); return new Text("BODY", 0, 0);
+      },
+    }});
+    await h.run("text('A'); text('B');"); h.render();
+    const before = preferences.length;
+    h.runtime.setRoot(new Container());
+    expect(() => h.padding(3)).not.toThrow();
+    expect(preferences).toHaveLength(before);
+    expect(h.render()).toContain(" (original)");
+  });
+
+  it("folds the whole container and opens only independent section headings", () => {
+    const h = fixture({ containerExpanded: false }); h.start(); h.nestedStart("p/1"); h.nestedEnd("p/1");
+    h.parent.updateResult(result([call("p/1")], "SCRIPT-OUTPUT"), false);
+    expect(h.render()).toContain("▸ Ran code");
+    expect(h.targets()).toHaveLength(1);
+    expect(h.render()).not.toMatch(/SOURCE CONTROL|CHILD-RESULT|SCRIPT-OUTPUT|Script output/);
+
+    h.targets()[0]!.setExpanded(true);
+    const opened = h.render();
+    expect(opened).toContain("▾ Ran code");
+    expect(opened).toContain("▸ Source");
+    expect(opened).toContain("▸ Script output");
+    expect(h.targets()).toHaveLength(4);
+    expect(h.targets().slice(1).every(target => !target.expanded)).toBe(true);
+    expect(opened).not.toMatch(/SOURCE CONTROL|CHILD-RESULT|SCRIPT-OUTPUT/);
+  });
+
+  it("keeps Source, native code controls and sibling disclosure independent through parent folding", () => {
+    const h = fixture(); h.start(); h.nestedStart("p/1"); h.nestedEnd("p/1");
+    h.parent.updateResult(result([call("p/1")], "SCRIPT-OUTPUT"), false); h.render();
+    const [parent, source, child, output] = h.targets();
+    source!.setExpanded(true);
+    expect(h.render()).toContain("SOURCE CONTROL");
+    expect(h.render()).not.toContain("USER-CODE");
+    expect(parent!.expanded).toBe(true);
+    expect([child!.expanded, output!.expanded]).toEqual([false, false]);
+    const sourceComponent = source as typeof source & Component;
+    sourceComponent.handleMouse?.({ type: "click", button: "left", x: 0, y: 1, width: 100, height: 2,
+      screenX: 0, screenY: 1, shift: false, alt: false, ctrl: false });
+    expect(h.render()).toContain("USER-CODE");
+    child!.setExpanded(true); output!.setExpanded(true); h.render();
+    parent!.setExpanded(false);
+    expect(h.render()).not.toMatch(/SOURCE CONTROL|USER-CODE|CHILD-RESULT|SCRIPT-OUTPUT/);
+    expect(h.targets()).toEqual([parent]);
+    sourceComponent.handleMouse?.({ type: "click", button: "left", x: 0, y: 0, width: 100, height: 1,
+      screenX: 0, screenY: 0, shift: false, alt: false, ctrl: false });
+    expect(source!.expanded).toBe(true);
+    parent!.setExpanded(true);
+    const reopened = h.render();
+    expect(reopened).toContain("USER-CODE"); expect(reopened).toContain("CHILD-RESULT"); expect(reopened).toContain("SCRIPT-OUTPUT");
+    expect(h.targets()).toEqual([parent, source, child, output]);
+  });
+
+  it("uses native bulk defaults at lazy section creation and forwards later bulk actions", () => {
+    const h = fixture({ containerExpanded: false }); h.render();
+    h.mode.toolOutputExpanded = true; h.parent.setExpanded(true);
+    h.parent.updateResult(result([call("p/1")], "SCRIPT-OUTPUT"), false); h.render();
+    expect(h.targets().every(target => target.expanded)).toBe(true);
+    const scope = h.chat.children[0] as Component & {setExpanded(value: boolean): void};
+    scope.setExpanded(false); h.render(); expect(h.targets()).toHaveLength(1);
+    scope.setExpanded(true); h.render(); expect(h.targets().every(target => target.expanded)).toBe(true);
+  });
+
+  it("keeps the settled execution caption after a late partial replacement", () => {
+    const h = fixture(); h.start();
+    h.parent.updateResult(result([call("p/1")]), false); h.render();
+    const label = h.targets()[0]!.label;
+    expect(label).toMatch(/^▾ Ran code/);
+    h.parent.updateResult(result([call("p/1", "read", "running"), call("p/2")]), true); h.render();
+    expect(h.targets()[0]!.label).toBe(label);
+  });
+
+  it("styles matched nested shell summaries like ordinary shell summaries", () => {
+    const h = fixture({ colored: true }); const args = {command: "printf 'PARITY'"};
+    const direct = h.tool("bash", "direct", args);
+    direct.updateResult({content:[{type:"text",text:"CHILD-RESULT"}],isError:false,durationMs:3}, false);
+    h.chat.addChild(direct); h.start(); h.nestedStart("p/1", "bash", args); h.nestedEnd("p/1", "bash");
+    h.parent.updateResult(result([call("p/1", "bash")]), false);
+    const lines = h.chat.render(100).filter(line => stripTerminalSequences(line).includes("PARITY"));
+    expect(lines).toHaveLength(2);
+    expect(lines[0]!.replace(/^  /, "")).toBe(lines[1]);
+  });
+
   it.each(["items", "flat"] as const)("lays out %s headings while preserving the existing local group level", layout => {
     const h = fixture({ layout });
     h.parent.updateResult(result([{ ...call("p/1"), args: '{"path":"한글/👩‍💻.ts"}' }, call("p/2")], "SCRIPT RESULT"));
@@ -122,7 +368,7 @@ describe("independent native codemode items", () => {
     expect(members).toHaveLength(2);
     for (const member of members) expect(member.label.match(/^ */)![0]).toHaveLength(depth + 2);
     expect(h.targets().at(-1)!.label.match(/^ */)![0]).toHaveLength(depth);
-    expect(h.targets()[0]!.label).toMatch(/^▸ Code source/);
+    expect(h.targets()[0]!.label).toMatch(/^▾ Ran code/);
 
     h.layout(layout === "items" ? "flat" : "items", false); h.render();
     expect(group.label.match(/^ */)![0]).toHaveLength(depth === 2 ? 0 : 2);
@@ -198,7 +444,8 @@ describe("independent native codemode items", () => {
     h.parent.updateResult(result([call("p/1")], "NEW-OUTPUT"), false);
     expect(h.render()).toContain("NEW-OUTPUT"); expect(h.chat.children[0]).not.toBe(h.parent);
     h.parent.setExpanded(false);
-    for (let frame = 0; frame < 3; frame++) expect(h.render()).toContain("NEW-OUTPUT");
+    for (let frame = 0; frame < 3; frame++) expect(h.render()).not.toContain("NEW-OUTPUT");
+    h.parent.setExpanded(true); expect(h.render()).toContain("NEW-OUTPUT");
     expect(prune.mock.calls.length).toBe(0);
   });
 
@@ -252,11 +499,14 @@ describe("independent native codemode items", () => {
     const h = fixture({ expanded: true }); h.start(); h.nestedStart("p/1"); h.nestedEnd("p/1");
     h.parent.updateResult(result([call("p/1")], "SCRIPT-OUTPUT"), false);
     const visible = h.render();
-    expect(visible).toContain("Code source"); expect(visible).toContain("CHILD-RESULT"); expect(visible).toContain("SCRIPT-OUTPUT");
+    expect(visible).toContain("Ran code"); expect(visible).toContain("Source");
+    expect(visible).toContain("CHILD-RESULT"); expect(visible).toContain("SCRIPT-OUTPUT");
     expect(visible).not.toContain("ORIGINAL-AGGREGATE"); expect(visible).not.toContain("USER-CODE");
-    expect(h.targets().map(target => target.label)).toHaveLength(3);
+    expect(h.targets().map(target => target.label)).toHaveLength(4);
     expect(h.genericResult).toHaveBeenCalled();
     h.parent.setExpanded(false);
+    expect(h.render()).not.toContain("CHILD-RESULT"); expect(h.render()).not.toContain("SCRIPT-OUTPUT");
+    h.parent.setExpanded(true);
     expect(h.render()).toContain("CHILD-RESULT"); expect(h.render()).toContain("SCRIPT-OUTPUT");
   });
 
@@ -280,8 +530,8 @@ describe("independent native codemode items", () => {
     const group = targets.find(target => target.kind === "group")!;
     expect(group.label).toContain("2 calls"); expect(group.expanded).toBe(false);
     expect(group.label).not.toContain("0 lines");
-    group.setExpanded(true); h.render(); expect(h.targets()).toHaveLength(4);
-    group.setExpanded(false); h.render(); expect(h.targets()).toHaveLength(2);
+    group.setExpanded(true); h.render(); expect(h.targets()).toHaveLength(5);
+    group.setExpanded(false); h.render(); expect(h.targets()).toHaveLength(3);
   });
 
   it.each([false, true])("initializes local groups from native bulk expansion without reopening a user fold: %s", expanded => {
@@ -355,7 +605,7 @@ describe("independent native codemode items", () => {
     other.updateResult(result([call("p/1")]), false);
 
     const visible = h.render();
-    expect(h.targets()).toHaveLength(4);
+    expect(h.targets()).toHaveLength(6);
     expect(visible).toContain("Detailed result unavailable");
     expect(visible).not.toContain("AMBIGUOUS-BODY");
     expect(childResult).toHaveBeenCalledTimes(bodiesBefore);
@@ -394,7 +644,7 @@ describe("independent native codemode items", () => {
     restored.updateResult(result([call("p/1")], "HISTORY-OUTPUT"), false); restored.setExpanded(true);
     h.chat.addChild(restored);
     const visible = h.render();
-    expect(visible).toContain("Code source"); expect(visible).toContain("HISTORY-OUTPUT");
+    expect(visible).toContain("Ran code"); expect(visible).toContain("Source"); expect(visible).toContain("HISTORY-OUTPUT");
     expect(visible).toContain("Detailed result unavailable"); expect(visible).not.toContain("LIVE-PAYLOAD");
 
     h.parent.updateResult(result([call("p/1")]), false);
@@ -422,18 +672,18 @@ describe("independent native codemode items", () => {
     } } });
     h.start(); h.nestedStart("p/1"); h.nestedEnd("p/1");
     h.parent.updateResult(result([call("p/1")]), true); expect(h.render()).toContain("RICH");
-    const target = h.targets()[1]!;
+    const target = h.targets()[2]!;
     h.parent.updateResult(result([]), true); h.render();
-    h.parent.updateResult(result([call("p/1")]), true); h.render(); expect(h.targets()[1]).toBe(target);
+    h.parent.updateResult(result([call("p/1")]), true); h.render(); expect(h.targets()[2]).toBe(target);
     h.parent.updateResult(result([]), false); h.render();
     const before = h.requests.mock.calls.length;
     invalidate!(); expect(h.requests).toHaveBeenCalledTimes(before);
-    expect(h.targets()).toHaveLength(1);
+    expect(h.targets()).toHaveLength(2);
   });
 
   it("uses the original parent rather than stale items after malformed replacement metadata", () => {
     const h = fixture({ expanded: true }); h.start(); h.nestedStart("p/1"); h.nestedEnd("p/1");
-    h.parent.updateResult(result([call("p/1")]), true); h.render(); expect(h.targets()).toHaveLength(2);
+    h.parent.updateResult(result([call("p/1")]), true); h.render(); expect(h.targets()).toHaveLength(3);
     const facts = h.runtime.bind(h.parent as unknown as NativeToolComponent)!.facts, matched = facts.matched(facts.records![0]!)!;
     expect(h.runtime.input(matched)?.result.content).toBeDefined();
     h.parent.updateResult({ content: [{ type: "text", text: "CURRENT-ORIGINAL" }], details: {}, isError: false }, true);
@@ -552,7 +802,7 @@ describe("independent native codemode items", () => {
     h.start(); h.nestedStart("p/1"); h.nestedEnd("p/1"); h.parent.updateResult(result([call("p/1")]), false);
     const firstFrame = h.render();
     expect(firstFrame).toContain("OLD-FRAME"); expect(firstFrame).not.toContain("NEW-SECOND-LINE");
-    const scope = h.chat.children[0]!, target = h.targets()[1]!;
+    const scope = h.chat.children[0]!, target = h.targets()[2]!;
     const y = firstFrame.split("\n").findIndex(line => line.includes("OLD-FRAME"));
     expect(scope.handleMouse?.({ type: "click", button: "left", x: 0, y, width: 100, height: firstFrame.split("\n").length,
       screenX: 0, screenY: 0, shift: false, alt: false, ctrl: false })).toEqual({ handled: true });
@@ -594,8 +844,16 @@ it.skipIf(!compositorSource)("preserves independent codemode controls and appear
   expect(collapse.toggleTool(toolRows[0]!.component, toolRows[0]!.startLine)).toBe(true);
   expect(render().lines.join("\n")).not.toContain("CHILD-RESULT");
   expect(render().lines.join("\n")).toContain("SCRIPT-OUTPUT");
+  const sourceRange = ranges.find(range => Reflect.get(range.component, "toolName") === "__codemode_source__")!;
+  expect(collapse.toggleTool(sourceRange.component, sourceRange.startLine)).toBe(true);
+  expect(render().lines.join("\n")).not.toContain("SOURCE CONTROL");
+  expect(h.targets()[0]!.expanded).toBe(true);
   h.parent.setExpanded(false);
-  expect(render().lines.join("\n")).toContain("SCRIPT-OUTPUT");
+  expect(render().lines.join("\n")).not.toContain("SCRIPT-OUTPUT");
+  h.parent.setExpanded(true);
+  const reopened = render().lines.join("\n");
+  expect(reopened).toContain("SCRIPT-OUTPUT");
+  expect(reopened).not.toContain("CHILD-RESULT"); expect(reopened).not.toContain("SOURCE CONTROL");
   h.padding(3);
   expect(render().changed).toBe(true);
 });

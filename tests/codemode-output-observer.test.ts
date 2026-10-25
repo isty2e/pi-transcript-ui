@@ -132,6 +132,15 @@ describe("native codemode output observation", () => {
     expect(getter).not.toHaveBeenCalled(); expect(Object.getOwnPropertyDescriptor(Worker.prototype, "on")).toEqual(before);
   });
 
+  it("declines cross-process-style definition proxies without reflective calls", () => {
+    const reflect = vi.fn(() => { throw new Error(); });
+    const definition = new Proxy({ execute() {} }, { getOwnPropertyDescriptor: reflect, getPrototypeOf: reflect });
+    const before = Object.getOwnPropertyDescriptor(Worker.prototype, "on");
+    expect(observer(() => undefined).watch(definition)).toBe(false);
+    expect(reflect).not.toHaveBeenCalled();
+    expect(Object.getOwnPropertyDescriptor(Worker.prototype, "on")).toEqual(before);
+  });
+
   it("rolls back a tap when installing execute fails", () => {
     const definition = Object.preventExtensions({ execute() {} });
     const proxy = new Proxy(definition, { defineProperty() { throw new Error(); } });
@@ -185,6 +194,7 @@ describe("native codemode output observation", () => {
 
   it("captures empty success and plain script failure forms without parsing", () => {
     expect(capture([done()])).toEqual({ items: [], terminal: { ok: true } });
+    expect(capture([{ type: "done", ok: true, writes: "[]" }])).toEqual({ items: [], terminal: { ok: true } });
     expect(capture([output("before error"), { type: "done", ok: false, error: '{"message":"failed"}' }]))
       .toEqual({ items: [{ type: "text", text: "before error" }], terminal: { ok: false, error: '{"message":"failed"}' } });
   });

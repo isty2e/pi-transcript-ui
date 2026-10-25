@@ -11,7 +11,7 @@ import { fileMutationFor } from "./file-mutation.js";
 import { createPatchRequestParser } from "./patch-request.js";
 import { summaryMetrics, type FileCapabilities } from "./tool-metrics.js";
 import { groupSummary, groupSummaryRequirements, type GroupMemberSummary } from "./group-summary.js";
-import type { CodemodePresentation, CodemodeScope, GroupRow, ItemToolkit, SourceProjection } from "./codemode/view.js";
+import type { CodemodePresentation, CodemodeScope, GroupRow, ItemToolkit, CodemodeProjection } from "./codemode/view.js";
 import { createCommandColorizer } from "./shell-colors.js";
 import { codemodeSummary } from "./codemode/summary.js";
 import { shellSessionSummary } from "./shell-session-summary.js";
@@ -146,6 +146,18 @@ class SummaryRow implements Component {
     return [this.fit(available)];
   }
   invalidate(): void { this.fitted = []; }
+}
+
+function createSummaryRow(read: Parameters<ItemToolkit["row"]>[0], getTheme: () => RowTheme, maxWidth?: number): ReturnType<ItemToolkit["row"]> {
+  let colorizer: ReturnType<typeof createCommandColorizer> | undefined;
+  let active = true;
+  const format = (parts: LineParts, error = false): string => {
+    if (error || !parts.command) colorizer?.clear();
+    return styleLine(getTheme(), parts, error, (command, text, theme) =>
+      active ? (colorizer ??= createCommandColorizer()).format(command, text, theme) : text);
+  };
+  const row = new SummaryRow(width => read(width, format), maxWidth);
+  return Object.assign(row, { dispose(): void { active = false; row.invalidate(); colorizer?.clear(); colorizer = undefined; } });
 }
 
 class DisclosureGroup extends SummaryRow implements GroupRow {
@@ -346,7 +358,7 @@ type ToolDecoration = {
   readonly group: ToolGroup | null;
   setGroup(group: ToolGroup | null): void;
   setClassification(classification: ToolClassification): void;
-  setProjection(projection: SourceProjection): void;
+  setProjection(projection: CodemodeProjection): void;
   release(): CleanupOutcome;
 };
 type DecorationAttempt = { kind: "decorated"; binding: ToolDecoration } |
@@ -387,8 +399,7 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
   for (const key of methodKeys) {
     descriptors.set(key, Object.getOwnPropertyDescriptor(tool, key));
   }
-  let colorizer: ReturnType<typeof createCommandColorizer> | undefined;
-  let projection: SourceProjection | undefined;
+  let projection: CodemodeProjection | undefined;
   let summaryRevision = 0;
   let summaries: { revision: number; width: number | undefined; intent: string | undefined; phase: ToolPhase;
     sourceRevision: number | undefined; items: boolean; limits: string; home: string | undefined; parts: LineParts; isError: boolean;
@@ -398,23 +409,21 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
     summaryRevision++; summaries = [];
     row.invalidate(); group?.invalidate();
   };
-  const colorCommand = (command: CommandSpan, text: string, theme: RowTheme): string =>
-    active ? (colorizer ??= createCommandColorizer()).format(command, text, theme) : text;
-  const row = new SummaryRow((width) => {
+  const row = createSummaryRow((width, format) => {
     const revision = summaryRevision;
     const indent = group && group.members.length > 1 ? "  " : "";
     const contentWidth = width === undefined ? undefined : Math.max(0, width - indent.length);
     const limits = options.displayLimits ?? DEFAULT_DISPLAY_LIMITS;
     const limitsKey = `${limits.rowMaxWidth}:${limits.commandMaxWidth}:${limits.intentMaxWidth}:${limits.commandPreview}:${limits.toolDuration}`;
     const home = process.env["HOME"];
-    const phase = phaseFor(tool);
     const intent = options.resolveIntent ? options.resolveIntent(tool.toolCallId, tool.args) : intentFromArgs(tool.args);
     const itemProjection = projection?.items ? projection : undefined;
+    const outcome = itemProjection?.outcome;
+    const phase = outcome ? "settled" : phaseFor(tool);
     const sourceRevision = itemProjection?.summaryRevision, items = itemProjection !== undefined;
     const commandValue = tool.toolName === "bash" && isRecord(tool.args) ? tool.args.command : undefined;
     const command = typeof commandValue === "string" ? commandValue : undefined;
     const cacheable = items || (command !== undefined && !capabilities.mutation && !capabilities.read && !capabilities.patch && classification.operation !== "read");
-    const outcome = itemProjection?.outcome;
     const isError = outcome?.isError ?? tool.result?.isError === true;
     const durationMs = outcome ? outcome.durationMs : toolDurationMs(tool.result, tool.isPartial);
     let cachedSummary = cacheable ? summaries.find(entry => entry.revision === revision && entry.width === contentWidth &&
@@ -440,15 +449,14 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
       else summaries = [];
     }
     const { parts } = cachedSummary;
-    if (isError || !parts.command) colorizer?.clear();
-    return `${indent}${styleLine(options.getTheme(), { ...parts, rest: `${parts.rest}${projection?.fallback ? " (original)" : ""}`,
-      ...(itemProjection ? { action: "Code source" } : {}), marker: tool.expanded ? "▾" : "▸" }, isError, colorCommand)}`;
-  }, options.displayLimits?.rowMaxWidth);
-  // Ordinary bodies keep the whole native shell/images. Codemode delegates only
-  // its live call slot here, leaving each result with its own disclosure target.
+    return `${indent}${format({ ...parts, rest: `${parts.rest}${projection?.fallback ? " (original)" : ""}`,
+      ...(itemProjection ? { action: phase === "pending" ? "Run code" : phase === "running" ? "Running code" : "Ran code" } : {}),
+      marker: tool.expanded ? "▾" : "▸" }, isError)}`;
+  }, options.getTheme, options.displayLimits?.rowMaxWidth);
+  // Items mode paints the live call slot only through its separate Source row.
   const body: Component & { readonly children: Component[] } = {
-    get children() { return projection?.items ? projection.body.children : children.read(); },
-    render: (width) => projection?.items ? projection.body.render(width) : native(() => originalRender.call(tool, width)),
+    get children() { return children.read(); },
+    render: (width) => native(() => originalRender.call(tool, width)),
     invalidate: () => native(() => originalInvalidate.call(tool)),
   };
   const spacer = new Spacer(1);
@@ -458,7 +466,7 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
     const first = !grouped || current.members[0] === tool;
     const header: Component[] = first ? [spacer, ...(grouped ? [current] : [])] : [];
     if (grouped && !current.expanded) return header;
-    return [...header, row, ...(tool.expanded ? [body] : [])];
+    return [...header, row, ...(!projection?.items && tool.expanded ? [body] : [])];
   };
   const target: DisclosureTarget = {
     kind: "tool",
@@ -468,11 +476,11 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
     setExpanded(expanded) { if (active) tool.setExpanded(expanded); },
   };
   const childrenGet = () => nativeDepth > 0 || !active ? children.read()
-    : projection?.items ? projection.sourceChildren(projectedChildren) : projectedChildren();
+    : projection?.items ? projection.parentChildren(projectedChildren) : projectedChildren();
   const childrenSet = (next: Component[]) => children.write(next);
   const render: NativeToolComponent["render"] = function (width) {
     if (!active || nativeDepth > 0) return native(() => originalRender.call(tool, width));
-    return projection?.items ? projection.sourceLines(width, () => childrenGet().flatMap(child => child.render(width)))
+    return projection?.items ? projection.parentLines(width, () => childrenGet().flatMap(child => child.render(width)))
       : projectedChildren().flatMap((child) => child.render(width));
   };
   const update = () => {
@@ -500,8 +508,7 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
     for (const child of children) {
       const height = child.render(event.width).length;
       if (event.y >= offset && event.y < offset + height) {
-        if (child === body) return projection?.items ? projection.body.handleMouse?.({ ...event, y: event.y - offset, height })
-          : native(() => originalMouse?.call(tool, { ...event, y: event.y - offset, height }));
+        if (child === body) return native(() => originalMouse?.call(tool, { ...event, y: event.y - offset, height }));
         if (child === spacer) return undefined;
         if (event.type === "press" && event.button === "left") return { handled: true };
         if (event.type === "click" && event.button === "left") {
@@ -531,7 +538,7 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
   function release(): CleanupOutcome {
     active = false;
     summaries = []; row.invalidate();
-    const outcomes = [attemptCleanup("command colorizer", () => colorizer?.clear())];
+    const outcomes = [attemptCleanup("command colorizer", () => row.dispose())];
     for (const [key, expected] of installed) {
       outcomes.push(restoreIfOwned(tool, key, expected, () => restoreDescriptor(tool, key, descriptors.get(key))));
     }
@@ -595,8 +602,7 @@ export function attachTranscriptPresentation(root: { children: Component[] }, op
   const originalRender = container.render;
   const originalDescriptors = new Map(["addChild", "removeChild", "clear", "render"].map((key) => [key, Object.getOwnPropertyDescriptor(container, key)]));
   const toolkit: ItemToolkit = {
-    row: read => new SummaryRow(read, options.displayLimits?.rowMaxWidth),
-    format: (parts, error) => styleLine(options.getTheme(), parts, error),
+    row: read => createSummaryRow(read, options.getTheme, options.displayLimits?.rowMaxWidth),
     requestRender: options.requestRender,
     describe(record, matched, parent) {
       const input = matched ? options.codemode?.runtime.input(matched) : undefined;
