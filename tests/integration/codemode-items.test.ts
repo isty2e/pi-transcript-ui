@@ -131,6 +131,26 @@ function fixture(options: { expanded?: boolean; containerExpanded?: boolean; col
 }
 
 describe("independent native codemode items", () => {
+  it("reuses the captured native host without leaving another lookup hook installed", () => {
+    const h = fixture();
+    const lookup = Object.getOwnPropertyDescriptor(InteractiveMode.prototype, "getRegisteredToolDefinition");
+    h.runtime.start({ mode: "tui", sessionManager: h.mode.sessionManager } as unknown as ExtensionContext);
+    h.runtime.setRoot(h.root);
+    expect(h.runtime.mode()).toBe(h.mode);
+    expect(Object.getOwnPropertyDescriptor(InteractiveMode.prototype, "getRegisteredToolDefinition")).toEqual(lookup);
+  });
+
+  it("rediscovers the native host after retiring and restarting observation", () => {
+    const h = fixture();
+    h.runtime.shutdown();
+    h.runtime.start({ mode: "tui", sessionManager: h.mode.sessionManager } as unknown as ExtensionContext);
+    h.runtime.setRoot(h.root);
+    h.mode.getRegisteredToolDefinition("codemode");
+    expect(h.runtime.mode()).toBe(h.mode);
+    const parent = h.tool("codemode", "restarted", { code: "return 1;" });
+    expect(h.runtime.bind(parent as unknown as NativeToolComponent)?.supported()).toBe(true);
+  });
+
   it("observes the actual registered executor before the first frame and discloses only selected output bodies", async () => {
     const h = fixture({nativeCode: true, containerExpanded: false});
     await h.run("text('A'); text('B'); console.log('C'); return {value:2};");

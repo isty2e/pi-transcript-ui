@@ -561,20 +561,30 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
     setClassification(next) { classification = next; dirtySummary(); }, setProjection(next) { projection = next; dirtySummary(); }, release } };
 }
 
+export class UnsupportedTranscriptContainerError extends Error {
+  constructor() {
+    super("Unsupported Pi transcript container; native tools left unchanged");
+    this.name = "UnsupportedTranscriptContainerError";
+  }
+}
+
 /** Attach to the actual chat container without owning the editor or footer. */
-export function attachTranscriptPresentation(root: { children: Component[] }, options: PresentationOptions): PresentationAttachment {
-  const document = root.children[0] as Partial<ChatContainer> | undefined;
+export function attachTranscriptPresentation(root: unknown, options: PresentationOptions): PresentationAttachment {
+  const children = isRecord(root) ? root.children : undefined;
+  const document = (Array.isArray(children) ? children[0] : undefined) as Partial<ChatContainer> | undefined;
   // Pi 0.85.1 puts header, resource notices and chat inside its document.
   // A directly supplied chat container remains supported by the adapter API.
-  const sections = document?.children;
-  const nested = sections?.length === 3 && sections.every((section) =>
+  const sections = isRecord(document) ? document.children : undefined;
+  if (!Array.isArray(sections)) throw new UnsupportedTranscriptContainerError();
+  for (const section of sections) if (!isRecord(section)) throw new UnsupportedTranscriptContainerError();
+  const nested = sections.length === 3 && sections.every((section) =>
     !isTool(section) && Array.isArray((section as Partial<ChatContainer>).children) &&
     typeof (section as Partial<ChatContainer>).addChild === "function" &&
     typeof (section as Partial<ChatContainer>).clear === "function");
   const chat = (nested ? sections[2] : document) as Partial<ChatContainer> | undefined;
   if (!chat || !Array.isArray(chat.children) || typeof chat.addChild !== "function" ||
     typeof chat.removeChild !== "function" || typeof chat.clear !== "function") {
-    throw new Error("Unsupported Pi transcript container; native tools left unchanged");
+    throw new UnsupportedTranscriptContainerError();
   }
   const container = chat as ChatContainer;
   const renderDescriptor = propertyDescriptor(container, "render");

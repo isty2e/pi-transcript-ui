@@ -22,6 +22,12 @@ Test admission follows release capabilities: structured prompt sections from 0.8
 
 [Shell-session summaries](usage.md#shell-sessions) use provider-shaped requests and receipts with real native tool components. These tests do not execute the external providers or run the presentation extension through Pi's extension loader.
 
+## PiG
+
+PiG 0.4.1 and 0.5.3 use a Go transcript that this extension's Pi UI connection does not support. Interactive sessions keep PiG's original tool cards and Ctrl+O behavior, with a one-time informational notice. Compact rows, adjacent-call groups and codemode item/output controls are unsupported on these hosts; changing display settings does not enable them.
+
+If transcript attachment fails, codemode presentation observation stops and new purpose-text prompt/schema requests are disabled until a successful retry or a new session. Genuine attachment errors remain errors; only unsupported containers receive the informational native-display notice. Existing intent records and non-interactive intent recording are still handled normally. Supporting compact PiG presentation would require a connection that preserves complete native cards and supports grouping across cards; replacing result text alone is insufficient.
+
 ## Input support
 
 Support depends on what is **active**, not merely installed.

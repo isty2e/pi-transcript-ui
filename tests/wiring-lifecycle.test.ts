@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { initTheme, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
 import { Container, Text, type Component } from "@earendil-works/pi-tui";
-import { attachTranscriptPresentation, type NativeToolComponent } from "../src/wiring.js";
+import { attachTranscriptPresentation, UnsupportedTranscriptContainerError, type NativeToolComponent } from "../src/wiring.js";
 import { restorationFault, withAccessorChildren } from "./fixtures/native-children.js";
 
 initTheme();
@@ -17,6 +17,30 @@ function transcript() {
 }
 
 describe("native children and cleanup boundaries", () => {
+  it.each(["missing root", "null root", "root child map", "document child map", "null section", "primitive section"])(
+    "refuses %s before changing native presentation", (shape) => {
+      const { root, chat } = transcript();
+      const native = tool(); native.updateResult(result("UNCHANGED")); chat.addChild(native);
+      const before = native.render(80);
+      let input: unknown = root;
+      if (shape === "missing root") input = undefined;
+      if (shape === "null root") input = null;
+      if (shape === "root child map") input = { children: { 0: chat, length: 1 } };
+      if (shape === "document child map") input = { children: [{ children: { length: 3 } }] };
+      if (shape === "null section" || shape === "primitive section") {
+        const document = new Container();
+        document.children = [new Container(), shape === "null section" ? null : 1, chat] as never;
+        root.children = [document];
+      }
+      let detach: ReturnType<typeof attachTranscriptPresentation> | undefined;
+      try {
+        expect(() => { detach = attachTranscriptPresentation(input as never, { getTheme: () => theme, requestRender() {} }); })
+          .toThrow(UnsupportedTranscriptContainerError);
+        expect(native.render(80)).toEqual(before);
+      } finally { detach?.(); }
+    },
+  );
+
   it("keeps accessor backing and body traversal current through clear, replacement and detach", () => {
     const native = tool();
     const readBacking = withAccessorChildren(native);

@@ -134,6 +134,10 @@ export class CodemodeRuntime {
     this.stop();
     this.context = context;
     if (context.mode !== "tui") { this.releaseLookup(); return; }
+    if (this.captured === undefined) {
+      this.releaseLookup();
+      this.releaseLookup = discover(mode => { this.captured = mode; this.watchOutput(); });
+    }
     this.active = true;
     this.outputObserver = new CodemodeOutputObserver(id => {
       const execution = this.executions.get(id);
