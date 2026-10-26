@@ -12,7 +12,7 @@ pi-transcript-ui presents tool summaries in interactive Pi sessions. Compatibili
 | 1.1.0 | Shared UI/session/compositor fixtures, structured prompts and native codemode execution |
 | 0.85.1 | Shared UI/session/compositor fixtures and legacy string prompts; no native codemode |
 
-Opt-in native-component checks also cover Pi 1.4.0 / Pi-Bolt 1.0.0 (`darwin-arm64-jit`): partial/final result updates, independent group/member expansion, parent rendering, detach/reattach, and original image bytes in default and self-rendered shells. Codemode checks use native mode construction, extension binding and tool-event dispatch to exercise independent items, renderer-owned source controls, completed child bodies and script Output, indented/flat/Original switching and retired callbacks. They use a memory terminal and controlled events, without executing models/tools or full application startup. Pi-Bolt is not a CI host. These checks run only when `PI_TRANSCRIPT_UI_TEST_BOLT` points to a Pi-Bolt executable; they do not establish complete terminal or extension-stack compatibility.
+Opt-in native-component checks also cover Pi 1.4.0 / Pi-Bolt 1.0.0 (`darwin-arm64-jit`): partial/final result updates, independent group/member expansion, parent rendering, detach/reattach, and original image bytes in default and self-rendered shells. Codemode checks exercise native mode construction, extension binding, renderer-owned source controls, completed child bodies, Script output, indented/flat/Original switching and retired callbacks. They combine controlled events with one pure codemode VM execution through the session's registered tool, checking separate text, return-value and console items. They use a memory terminal, without nested tool/model calls or full application startup. Pi-Bolt is not a CI host. These checks run only when `PI_TRANSCRIPT_UI_TEST_BOLT` points to a Pi-Bolt executable; they do not establish complete terminal or extension-stack compatibility.
 
 The SDK-based suites use matching versions of their Pi runtime dependencies, including core, AI and TUI, plus codemode and MCP where present. Vitest isolates test execution and binds this extension to the selected SDK/TUI. Compatibility hosts share a focused set of native UI, grouping/navigation, compositor and session/prompt checks. Unit, parser, detailed formatting and publication-workflow tests run only on the primary host.
 
@@ -21,6 +21,12 @@ Test admission follows release capabilities: structured prompt sections from 0.8
 [Codemode coverage](usage.md#codemode) includes real sandbox execution, partial updates, saved results and native expanded-body rendering. Independent items additionally use the primary host's native components and renderer dispatch, with terminal-only body association, original-parent fallback and compositor-cache/control fixtures. Those item-specific checks are not a blanket older-host or full terminal claim. The extension does not add codemode to older hosts.
 
 [Shell-session summaries](usage.md#shell-sessions) use provider-shaped requests and receipts with real native tool components. These tests do not execute the external providers or run the presentation extension through Pi's extension loader.
+
+## PiG
+
+PiG 0.4.1 and 0.5.3 use a Go transcript that this extension's Pi UI connection does not support. Interactive sessions keep PiG's original tool cards and Ctrl+O behavior, with a one-time informational notice. Compact rows, adjacent-call groups and codemode item/output controls are unsupported on these hosts; changing display settings does not enable them.
+
+If transcript attachment fails, codemode presentation observation stops and new purpose-text prompt/schema requests are disabled until a successful retry or a new session. Genuine attachment errors remain errors; only unsupported containers receive the informational native-display notice. Existing intent records and non-interactive intent recording are still handled normally. Supporting compact PiG presentation would require a connection that preserves complete native cards and supports grouping across cards; replacing result text alone is insufficient.
 
 ## Input support
 

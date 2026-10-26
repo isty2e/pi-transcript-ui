@@ -1,7 +1,7 @@
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { appendFileSync } from "node:fs";
 import { join } from "node:path";
-import { attachTranscriptPresentation, type PresentationAttachment } from "./wiring.js";
+import { attachTranscriptPresentation, UnsupportedTranscriptContainerError, type PresentationAttachment } from "./wiring.js";
 import { ToolNavigation, navigationComponent } from "./navigation.js";
 import { intentGuideline, isRecord } from "./intent.js";
 import { INTENT_ENTRY, IntentTransport } from "./intent-transport.js";
@@ -15,6 +15,7 @@ export const TRANSCRIPT_UI_VERSION = packageMetadata.version;
 const WIDGET_KEY = "pi-transcript-ui-attachment";
 const INTENT_PROMPT_SECTION = "pi_transcript_ui_intent";
 const COMPOSITOR_ACTIVE = Symbol.for("pi-fixed-editor-compositor.alternateScreenActive");
+const NATIVE_HOST_NOTICE = "Transcript UI cannot attach to this host's transcript; original tool display is unchanged.";
 function notify(ctx: ExtensionContext, message: string, level: "info" | "warning" | "error"): void {
   if (ctx.hasUI) ctx.ui.notify(message, level);
   else process.stderr.write(`transcript-ui: ${message}\n`);
@@ -31,9 +32,12 @@ export default function transcriptUi(pi: ExtensionAPI): void {
   let closeNavigator: (() => void) | undefined;
   let reconfigure: (() => void) | undefined;
   let live = false;
+  let attachmentFailure: "unsupported" | "error" | undefined;
+  const intentEnabled = () => settings.intent.enabled && !attachmentFailure;
   const warned = new Set<string>();
   const navigate = async (ctx: ExtensionContext): Promise<void> => {
     if (ctx.mode !== "tui" || closeNavigator) return;
+    if (attachmentFailure === "unsupported") { notify(ctx, NATIVE_HOST_NOTICE, "info"); return; }
     if (Reflect.get(globalThis, COMPOSITOR_ACTIVE) === true) {
       notify(ctx, "Alternative compositor is active: use the mouse to expand or collapse tool groups and members. Transcript keyboard navigation is unavailable in this mode; existing Pi shortcuts are unchanged.", "info");
       return;
@@ -56,6 +60,7 @@ export default function transcriptUi(pi: ExtensionAPI): void {
     closeNavigator?.();
     detach?.(); detach = undefined; reconfigure = undefined;
     codemodePresentation.dispose(); codemode.stop();
+    attachmentFailure = undefined;
     reportPersistenceError = (error) => {
       const message = `Transcript intent remains visible but was not saved: ${String(error)}`;
       notify(ctx, message, "error");
@@ -72,12 +77,13 @@ export default function transcriptUi(pi: ExtensionAPI): void {
         closeNavigator?.();
         detach?.(); detach = undefined;
         if (!live) return;
+        if (attachmentFailure) { codemode.start(ctx); codemode.setRoot(tui); }
         try {
           detach = attachTranscriptPresentation(tui, {
             getTheme: () => ctx.ui.theme, requestRender: () => tui.requestRender(), rules: groupingRules(settings), displayLimits: settings.display,
             codemode: codemodePresentation,
             resolveParameters: name => pi.getAllTools().find(tool => tool.name === name)?.parameters,
-            resolveIntent: (id, args) => settings.intent.enabled ? intents.resolve(id, args, settings.intent.maxLength) : undefined,
+            resolveIntent: (id, args) => intentEnabled() ? intents.resolve(id, args, settings.intent.maxLength) : undefined,
             onUnsupported: (name, error) => ctx.ui.notify(`transcript-ui kept ${name} native: ${String(error)}`, "warning"),
             onCleanupIncomplete: (source, failure) => {
               const context = source.kind === "tool" ? source.toolName : "attachment";
@@ -86,8 +92,21 @@ export default function transcriptUi(pi: ExtensionAPI): void {
               ctx.ui.notify(`transcript-ui cleanup incomplete (${context}, ${issueCount} issue${issueCount === 1 ? "" : "s"}): ${first.slot}: ${String(first.error)}`, "error");
             },
           });
+          attachmentFailure = undefined;
           tui.requestRender();
-        } catch (error) { ctx.ui.notify(`transcript-ui attachment failed: ${String(error)}`, "error"); }
+        } catch (error) {
+          attachmentFailure = error instanceof UnsupportedTranscriptContainerError ? "unsupported" : "error";
+          detach?.(); detach = undefined;
+          codemodePresentation.dispose(); codemode.shutdown();
+          if (attachmentFailure === "error") {
+            ctx.ui.notify(`transcript-ui attachment failed: ${String(error)}`, "error");
+            return;
+          }
+          if (!warned.has(NATIVE_HOST_NOTICE)) {
+            warned.add(NATIVE_HOST_NOTICE);
+            notify(ctx, NATIVE_HOST_NOTICE, "info");
+          }
+        }
       };
       if (live && !detach) reconfigure();
       return { render: () => [], invalidate: () => {} };
@@ -105,18 +124,20 @@ export default function transcriptUi(pi: ExtensionAPI): void {
   pi.on("before_agent_start", (event) => {
     const options = event.systemPromptOptions;
     if (options && "sections" in options && isRecord(options.sections)) {
-      if (settings.intent.enabled) options.sections[INTENT_PROMPT_SECTION] = intentGuideline(settings.intent.language);
+      if (intentEnabled()) options.sections[INTENT_PROMPT_SECTION] = intentGuideline(settings.intent.language);
       else delete options.sections[INTENT_PROMPT_SECTION];
       return;
     }
 
-    if (settings.intent.enabled) return {
+    if (intentEnabled()) return {
       systemPrompt: `${event.systemPrompt}\n\n${intentGuideline(settings.intent.language)}`,
     };
   });
   pi.on("before_provider_request", (event, ctx) => {
     const active = new Set(pi.getActiveTools());
-    return intents.preparePayload(event.payload, pi.getAllTools().filter((tool) => active.has(tool.name)), settings.intent, (message) => {
+    return intents.preparePayload(event.payload, pi.getAllTools().filter((tool) => active.has(tool.name)), {
+      ...settings.intent, enabled: intentEnabled(),
+    }, (message) => {
       if (warned.has(message)) return;
       warned.add(message);
       notify(ctx, message, "warning");

@@ -1,5 +1,8 @@
 import { isRecord } from "../intent.js";
 import { toolDurationMs } from "../tool-duration.js";
+import { scriptOutput, type OutputPart, type OutputWitness, type ScriptOutput } from "./output.js";
+export { scriptOutput } from "./output.js";
+export type { OutputBlock, ScriptOutput } from "./output.js";
 
 export type ActivityStatus = "running" | "ok" | "error" | "cancelled";
 export interface ActivityRecord {
@@ -31,11 +34,6 @@ interface Invocation {
   terminal?: EvidenceHandle;
 }
 
-export interface OutputBlock { readonly type: string; readonly [key: string]: unknown }
-export interface ScriptOutput {
-  readonly content: readonly OutputBlock[];
-  readonly fullOutputPath: string | undefined;
-}
 export interface ParentOutcome {
   readonly isError: boolean;
   readonly durationMs: number | undefined;
@@ -58,18 +56,6 @@ export function activityRecords(value: unknown): readonly ActivityRecord[] | und
       cost: nonnegative(item.cost) }));
   }
   return Object.freeze(records);
-}
-
-export function scriptOutput(result: unknown): ScriptOutput | undefined {
-  if (!isRecord(result) || !Array.isArray(result.content)) return undefined;
-  if (!result.content.every(block => isRecord(block) && typeof block.type === "string")) return undefined;
-  let content = result.content as OutputBlock[];
-  const first = content[0];
-  if (first?.type === "text" && typeof first.text === "string" &&
-    /^Script (completed|failed)\nWall time [\d.]+ seconds\nOutput:\n$/.test(first.text)) content = content.slice(1);
-  if (!content.some(block => block.type !== "text" || typeof block.text !== "string" || block.text.length > 0)) return undefined;
-  return Object.freeze({ content: Object.freeze([...content]),
-    fullOutputPath: isRecord(result.details) && typeof result.details.fullOutputPath === "string" ? result.details.fullOutputPath : undefined });
 }
 
 /** Supplied record order is authoritative; execution IDs are association evidence, not row identity. */
@@ -126,7 +112,7 @@ export class CodemodeFacts {
     this.revision++;
   }
 
-  observe(result: unknown, isPartial: boolean): void {
+  observe(result: unknown, isPartial: boolean, witness?: OutputWitness): void {
     if (this.sealed || this.invalid) return;
     const calls = isRecord(result) && isRecord(result.details) ? result.details.calls : undefined;
     const records = activityRecords(calls);
@@ -149,7 +135,7 @@ export class CodemodeFacts {
     if (!isPartial) {
       this.closeCapture();
       this.sealed = true;
-      this.outputValue = scriptOutput(result);
+      this.outputValue = scriptOutput(result, witness);
       this.outcomeValue = Object.freeze({ isError: isRecord(result) && result.isError === true, durationMs: toolDurationMs(result, false) });
       const retained = new Set(records.flatMap(record => this.realId(record) ?? []));
       for (const id of this.invocations.keys()) if (!retained.has(id)) this.invocations.delete(id);
@@ -169,6 +155,11 @@ export class CodemodeFacts {
     const invocation = this.invocations.get(terminal.id);
     return terminal[terminalBrand] === this && invocation?.name === terminal.name &&
       invocation.request === terminal.request && invocation.terminal === terminal.terminal;
+  }
+
+  ownsOutput(output: ScriptOutput | OutputPart): boolean {
+    return this.sealed && (this.outputValue === output ||
+      ("segments" in output && this.outputValue?.parts?.[output.ordinal] === output));
   }
 
   retainedEvidence(): ReadonlySet<EvidenceHandle> {

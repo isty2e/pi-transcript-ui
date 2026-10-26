@@ -86,7 +86,9 @@ PowerShell uses the raw first-line form in either mode. Neither mode changes exe
 | --- | --- | --- | --- |
 | Codemode | `display.codemode` | Independent items (indented) (`"items"`) | Independent items (indented) (`"items"`) / Independent items (flat) (`"flat"`) / Original (`"native"`) |
 
-Both independent-item modes give the source, recorded activities and final script Output separate controls. Indented mode places activity/group/Output headings two columns below the source depth; local group members keep their additional indentation. Flat mode removes that codemode level, not Source or ordinary grouping indentation. Expanded output, source code, images and recorded-detail bodies retain their original width and indentation in both modes.
+Both independent-item modes use the execution row to fold the whole container. Source, recorded activities and Script output have independent controls inside it; folding the parent preserves their expansion state. Indented mode places these headings two columns below the execution row; local group members keep their additional indentation. Flat mode removes that codemode level, not ordinary grouping indentation. Expanded output, source code, images and recorded-detail bodies retain their original width and indentation in both modes.
+
+Script output automatically uses verified output items when available, otherwise complete printed numbered sections or the combined native output. This needs no separate setting. Its members keep their additional heading indentation in flat mode, like ordinary group members; their bodies remain full width. Native expand-all and the current output-expansion default apply to these members as well.
 
 Original keeps the aggregate parent and the active renderer's original body; it does not force Pi's built-in renderer. None of these choices sets a code-visibility default or changes execution. See [activity/body availability and fallback](usage.md#codemode).
 
