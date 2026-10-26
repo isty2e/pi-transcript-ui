@@ -36,13 +36,14 @@ async function execute(code: string) {
 }
 
 describe("verified native script-output partitions", () => {
-  it("distinguishes observed emissions from lossless printed-format display regions", () => {
+  it("hides printed-format chrome while retaining observed literal emissions and the original snapshot", () => {
     const literal = "==> text 1/2 <==\nA\n==> text 2/2 <==\nB";
     const native = result([text(literal)]);
     const formatted = scriptOutput(native)!;
     expect(formatted.partition).toBe("formatted");
     expect(formatted.parts!.every(part => part.kind === "formatted")).toBe(true);
-    expect(formatted.parts!.flatMap(part => outputPartContent(formatted, part)).map(block => block.text).join("")).toBe(literal);
+    expect(formatted.content).toEqual([text(literal)]);
+    expect(bodies(formatted)).toEqual([{kind: "formatted", content: [text("A\n")]}, {kind: "formatted", content: [text("B")]}]);
     expect(bodies(scriptOutput(native, witness([text(literal)])))).toEqual([{kind: "text", content: [text(literal)]}]);
     expect(bodies(scriptOutput(native, witness([text("A"), text("B")])))).toEqual([
       {kind: "text", content: [text("A")]}, {kind: "text", content: [text("B")]},
@@ -54,7 +55,7 @@ describe("verified native script-output partitions", () => {
     const output = scriptOutput(native, witness([text("A"), text("B")]))!;
     expect(output.partition).toBe("formatted");
     expect(output.content).toEqual(native.content.slice(1));
-    expect(output.parts!.flatMap(part => outputPartContent(output, part)).map(block => block.text).join("")).toBe(native.content[1]!.text);
+    expect(output.parts!.flatMap(part => outputPartContent(output, part)).map(block => block.text).join("")).toBe("A\nREDACTED");
   });
 
   it.each([
@@ -72,7 +73,7 @@ describe("verified native script-output partitions", () => {
     expect(output.content).toEqual([text(value)]);
   });
 
-  it("preserves all formatting, prelude, images and console/error suffixes across display regions", () => {
+  it("preserves payload formatting, prelude, images and suffixes while omitting only numbered headers", () => {
     const image = {type: "image" as const, data: "AA==", mimeType: "image/png"};
     const content = [text("PRELUDE\n==> text 1/2 <==\r\nA\n[Image saved by native]"), image,
       text("==> text 2/2 <==\nB\n<console_output>\nC\n</console_output>\nScript error:\nE")];
@@ -81,11 +82,11 @@ describe("verified native script-output partitions", () => {
     expect(output.parts!.map(part => part.kind)).toEqual(["additional", "formatted", "formatted"]);
     const selected = output.parts!.flatMap(part => outputPartContent(output, part));
     expect(selected.filter(block => block.type === "image")).toEqual([image]);
-    expect(selected.filter(block => block.type === "text").map(block => block.text).join(""))
-      .toBe(content.filter(block => block.type === "text").map(block => block.text).join(""));
+    expect(output.content).toEqual(content);
     const sequence = (blocks: readonly OutputBlock[]) => blocks.flatMap<string | OutputBlock>(block =>
       block.type === "text" ? Array.from(String(block.text)) : [block]);
-    expect(sequence(selected)).toEqual(sequence(content));
+    expect(sequence(selected)).toEqual(sequence([text("PRELUDE\nA\n[Image saved by native]"), image,
+      text("B\n<console_output>\nC\n</console_output>\nScript error:\nE")]));
     expect(outputPartPreview(output, output.parts![1]!)).toBe("A");
   });
 
@@ -93,7 +94,8 @@ describe("verified native script-output partitions", () => {
     const output = scriptOutput(result([text("==> text 1/2 <==\nA\n==> text 2/2 <==")]))!;
     expect(output.partition).toBe("formatted");
     expect(outputPartPreview(output, output.parts![1]!)).toBeUndefined();
-    expect(outputPartContent(output, output.parts![1]!)).toEqual([text("==> text 2/2 <==")]);
+    expect(outputPartContent(output, output.parts![1]!)).toEqual([]);
+    expect(output.content).toEqual([text("==> text 1/2 <==\nA\n==> text 2/2 <==")]);
   });
 
   it.each(["/tmp/native-spill.txt", ""])("does not bypass native spill/truncation for %j", fullOutputPath => {

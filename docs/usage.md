@@ -166,8 +166,10 @@ The execution row folds the whole codemode container. Opening it reveals Source,
 Script output has three presentations:
 
 - When live output can be traced and matches the final result, it opens into text, return-value, console and image items, plus any remaining native notices or errors. Each item has its own control; one item remains a single Script output row.
-- Without that evidence, a complete ordered sequence of standalone `==> text 1/N <==` through `==> text N/N <==` lines produces numbered output sections. This uses printed formatting, not inferred `text()` calls or tool ownership. The sections preserve marker lines, images, console/error suffixes and any preceding content. Literal text deliberately using the same complete format can therefore be divided into display sections too.
+- Without that evidence, a complete ordered sequence of standalone `==> text 1/N <==` through `==> text N/N <==` lines produces numbered output sections. This uses printed formatting, not inferred `text()` calls or tool ownership. The redundant numbered headers are omitted from section bodies; payload text, images, console/error suffixes and any preceding content are preserved. The original result remains unchanged. Literal text deliberately using the same complete format can therefore be divided into display sections too.
 - Incomplete, repeated or inconsistent numbering, or a native full-output spill reference, keeps the combined output. Truncation notices and full-output paths are preserved; no hidden or redacted raw output is restored.
+
+Script output bodies use the selected result renderer. Transcript UI itself does not parse JSON text or decode escape sequences in those bodies.
 
 Only the final native result is displayed, and the original combined content remains unchanged. Script output is not assigned to nested tools, deduplicated against their results or reconstructed by parsing JavaScript. Source and output bodies continue to use Pi's selected renderers and their own controls.
 
@@ -176,6 +178,8 @@ Only the generated Source/activity/group/Script output headings receive the code
 Source expansion uses the selected renderer's current source component and code controls. A tool-rendering extension owns its code visibility/default and local result-expansion policy; Transcript UI does not add another code visibility setting. Without a renderer extension, Pi's normal renderers are used.
 
 Detailed child bodies require a start and terminal result observed in the current UI session, with an unambiguous match for the parent, tool name and actual call ID. Until then, opening an activity shows its recorded preview/status, not a reconstructed result. Saved history, cancelled placeholders, ambiguous active parents and reused completed parent IDs can therefore remain metadata-only. Identical previews are not used to match calls. Rich bodies are created only for completed calls and retain the whole selected native call/result rendering, including call-slot diffs and native images.
+
+Recorded calls still use the normal action verbs for recognized tool families, such as `Ran` for `exec_command`. Their argument previews are not decoded into requests, targets or result counts. Without matched input, `write_stdin` uses the general `Used shell session` wording rather than guessing whether it sent input or polled output.
 
 Items follow Pi's recorded order, not inferred script or completion order. Output contains the script's supplied final content after its activity; it is not interleaved with guessed printing times. Equal child-return and script-output text is retained in both places. The native protocol header is omitted only when it is the exact separate first header block. Other text, errors, truncation notices and images are retained. Full-output files are not read automatically.
 

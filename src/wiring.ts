@@ -619,7 +619,8 @@ export function attachTranscriptPresentation(root: unknown, options: Presentatio
       if (!childParameters.has(record.name)) childParameters.set(record.name, options.resolveParameters?.(record.name));
       const schema = childParameters.get(record.name);
       const mutation = fileMutationFor(schema), read = fileReadFor(schema);
-      const patch = !mutation && !read ? createPatchRequestParser(schema)?.(input?.args) : undefined;
+      const patchParser = !mutation && !read ? createPatchRequestParser(schema) : undefined;
+      const patch = patchParser?.(input?.args);
       const caps: FileCapabilities = { mutation, read, patch };
       const classification = classifyTool(record.name, options.rules, mutation ?? patch);
       const phase: ToolPhase = input || record.status !== "running" ? "settled" : "running";
@@ -632,7 +633,8 @@ export function attachTranscriptPresentation(root: unknown, options: Presentatio
         shellSession: input ? shellSessionSummary({ toolName: record.name, parameters: schema, args, result, isPartial: false }) !== undefined : false };
       return { classification, member, line(width) {
         const layout = { limits: options.displayLimits ?? DEFAULT_DISPLAY_LIMITS, ...(width === undefined ? {} : { width }) };
-        if (!input) return recordedActivityLine(record.name, record.preview, record.status, layout, record.durationMs);
+        if (!input) return recordedActivityLine(record.name, record.preview, record.status, layout, record.durationMs,
+          mutation?.action ?? (read ? "Read" : patchParser ? "Patch" : undefined));
         const intent = options.resolveIntent ? options.resolveIntent(input.id, args) : intentFromArgs(args);
         const context = { intent, layout, durationMs: result?.durationMs ?? record.durationMs };
         const shell = shellSessionSummary({ toolName: record.name, parameters: schema, args, result, isPartial: false });

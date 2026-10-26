@@ -105,7 +105,7 @@ function fixture(options: { expanded?: boolean; containerExpanded?: boolean; col
   });
   const render = () => chat.render(100).map(stripTerminalSequences).join("\n");
   cleanups.push(() => { detach(); presentation.dispose(); runtime.shutdown(); });
-  return { root, chat, parent, runtime, presentation, requests, emit, start, nestedStart, nestedEnd, render, mode, genericResult,
+  return { root, chat, parent, runtime, presentation, requests, emit, start, nestedStart, nestedEnd, render, mode, genericResult, definitions,
     async run(code: string, beforeEnd?: () => void, beforeDisplay?: () => void) {
       if (!codeDefinition.execute) throw new Error("Native executor unavailable");
       parent.updateArgs({code}); start();
@@ -185,7 +185,8 @@ describe("independent native codemode items", () => {
     const members = h.targets().filter(target => target.parent === section);
     expect(members.map(target => target.label)).toEqual(["  ▸ Output 1/2 — A", "  ▸ Output 2/2 — B"]);
     members[1]!.setExpanded(true); h.render();
-    expect(h.genericResult.mock.calls.at(-1)![0].content).toEqual([{type: "text", text: "==> text 2/2 <==\nB"}]);
+    expect(h.genericResult.mock.calls.at(-1)![0].content).toEqual([{type: "text", text: "B"}]);
+    expect(Reflect.get(h.parent, "result").content[1].text).toBe("==> text 1/2 <==\nA\n==> text 2/2 <==\nB");
 
     const malformed = fixture();
     const original = "==> text 1/3 <==\nA\n==> text 3/3 <==\nC";
@@ -210,6 +211,17 @@ describe("independent native codemode items", () => {
     expect(h.genericResult).not.toHaveBeenCalled();
     members[0]!.setExpanded(true); h.render();
     expect(h.genericResult.mock.calls.at(-1)![0].content).toEqual([{type: "text", text: payload}]);
+  });
+
+  it("can disclose an empty formatted section without painting its numbered header", () => {
+    const h = fixture({layout: "flat"});
+    h.parent.updateResult(result([], "==> text 1/2 <==\nA\n==> text 2/2 <=="), false);
+    h.render(); h.targets().at(-1)!.setExpanded(true); h.render();
+    const empty = h.targets().at(-1)!;
+    expect(empty.label.trim()).toBe("▸ Output 2/2");
+    empty.setExpanded(true);
+    expect(() => h.render()).not.toThrow();
+    expect(h.genericResult.mock.calls.at(-1)![0].content).toEqual([]);
   });
 
   it("applies native bulk defaults and image/padding settings to lazy output members", async () => {
@@ -552,6 +564,24 @@ describe("independent native codemode items", () => {
     expect(group.label).not.toContain("0 lines");
     group.setExpanded(true); h.render(); expect(h.targets()).toHaveLength(5);
     group.setExpanded(false); h.render(); expect(h.targets()).toHaveLength(3);
+  });
+
+  it("uses canonical actions for recorded native tools and declared read/patch aliases without manufacturing live bodies", () => {
+    const h = fixture({layout: "flat", expanded: true});
+    h.definitions.set("view_file", {...h.definitions.get("read")!, name: "view_file"});
+    h.definitions.set("change_file", {...h.definitions.get("read")!, name: "change_file", parameters: {
+      type: "object", properties: {input: {type: "string"}}, required: ["input"],
+    }});
+    const names = ["exec_command", "apply_patch", "codemode", "write_stdin", "view_file", "change_file"];
+    h.parent.updateResult(result(names.map((name, index) => ({...call(`saved/${index}`, name), args: "OPAQUE PREVIEW"}))), false);
+    h.render();
+    const labels = h.targets().filter(target => target.label.includes("OPAQUE PREVIEW")).map(target => target.label);
+    for (const action of ["Ran", "Patched", "Ran code", "Used shell session", "Read"]) {
+      expect(labels.some(label => label.trimStart().startsWith(`▾ ${action} `))).toBe(true);
+    }
+    expect(labels.filter(label => label.includes("Patched"))).toHaveLength(2);
+    expect(h.render()).toContain("Detailed result unavailable");
+    expect(h.genericResult).not.toHaveBeenCalled();
   });
 
   it.each([false, true])("initializes local groups from native bulk expansion without reopening a user fold: %s", expanded => {

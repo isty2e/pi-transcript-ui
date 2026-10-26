@@ -3,7 +3,7 @@ import { NO_SUMMARY_METRICS } from "../src/tool-metrics.js";
 import { createEditToolDefinition, createWriteToolDefinition } from "@earendil-works/pi-coding-agent";
 import { fileMutationFor } from "../src/file-mutation.js";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { countResultLines, displayFor, joinLine, resultBody, runningLine, settledLine } from "../src/display.js";
+import { countResultLines, displayFor, joinLine, recordedActivityLine, resultBody, runningLine, settledLine } from "../src/display.js";
 
 describe("displayFor", () => {
   it("derives action plus target for every built-in shape", () => {
@@ -50,6 +50,25 @@ describe("displayFor", () => {
 
 describe("row lines", () => {
   const content = [{ type: "text", text: "a\nb\nc" }];
+
+  it.each([
+    ["exec_command", "Running", "Ran"], ["apply_patch", "Patching", "Patched"],
+    ["codemode", "Running code", "Ran code"], ["write_stdin", "Using shell session", "Used shell session"],
+  ])("uses canonical recorded-call verbs for %s without interpreting its argument preview", (name, running, settled) => {
+    const preview = '{"cmd":"opaque incomplete';
+    expect(recordedActivityLine(name!, preview, "running", {}).action).toBe(running);
+    for (const status of ["ok", "error", "cancelled"] as const) {
+      const line = recordedActivityLine(name!, preview, status, {});
+      expect(line.action).toBe(settled);
+      expect(line.rest).toContain(preview);
+    }
+  });
+
+  it("keeps unknown tool identities literal, including names inherited by ordinary objects", () => {
+    for (const name of ["custom", "constructor", "toString", "__proto__"]) {
+      expect(recordedActivityLine(name, undefined, "ok", {}).action).toBe(name);
+    }
+  });
 
   it("builds running and settled lines in our wording", () => {
     const display = displayFor("read", { path: "f.txt" })!;

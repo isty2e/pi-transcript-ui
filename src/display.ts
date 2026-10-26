@@ -24,8 +24,16 @@ const actionForms = {
   List: { pending: "List", running: "Listing", settled: "Listed" },
   "Check output": { pending: "Check output", running: "Checking output", settled: "Checked output" },
   "Send input": { pending: "Send input", running: "Sending input", settled: "Sent input" },
+  "Use shell session": { pending: "Use shell session", running: "Using shell session", settled: "Used shell session" },
   Code: { pending: "Code", running: "Running code", settled: "Ran code" },
 } as const;
+
+const recordedActions: ReadonlyMap<string, keyof typeof actionForms> = new Map([
+  ["read", "Read"], ["grep", "Search"], ["find", "Find"], ["ls", "List"],
+  ["edit", "Edit"], ["write", "Write"], ["apply_patch", "Patch"],
+  ["bash", "Run"], ["powershell", "Run"], ["exec_command", "Run"],
+  ["write_stdin", "Use shell session"], ["codemode", "Code"],
+]);
 
 export interface CommandSpan {
   readonly source: string;
@@ -281,9 +289,8 @@ export function runningLine(
 
 /** An opaque producer preview is not a tool request or an output count. */
 export function recordedActivityLine(name: string, preview: string | undefined, status: "running" | "ok" | "error" | "cancelled",
-  layout: RowLayout, durationMs?: number): LineParts {
-  const actions: Record<string, ToolDisplay["action"]> = { read: "Read", grep: "Search", find: "Find", ls: "List", edit: "Edit", write: "Write", bash: "Run", powershell: "Run" };
-  const action = actions[name];
+  layout: RowLayout, durationMs?: number, declaredAction?: ToolDisplay["action"]): LineParts {
+  const action = declaredAction ?? recordedActions.get(name);
   const display: ToolDisplay | null = action ? { action, target: { kind: "none" } } : null;
   const outcome = `${preview ? ` ${stripTerminalSequences(preview)}` : ""}${status === "error" ? " — error" : status === "cancelled" ? " — cancelled" : ""}`;
   return summaryParts(name, display, outcome, status === "running" ? "running" : "settled", { layout, durationMs });

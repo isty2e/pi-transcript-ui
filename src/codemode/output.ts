@@ -119,11 +119,13 @@ function observedPartition(content: readonly OutputBlock[], witness: OutputWitne
 }
 
 function formattedPartition(content: readonly OutputBlock[]): readonly OutputPart[] | undefined {
-  const markers: {index: number; offset: number; number: number; total: number}[] = [];
+  const markers: {index: number; offset: number; contentOffset: number; number: number; total: number}[] = [];
   for (const [index, block] of content.entries()) {
     if (block.type !== "text" || typeof block.text !== "string") continue;
     for (const match of block.text.matchAll(/^==> text ([1-9]\d*)\/([1-9]\d*) <==\r?$/gm)) {
-      markers.push({index, offset: match.index, number: Number(match[1]), total: Number(match[2])});
+      const end = match.index + match[0].length;
+      markers.push({index, offset: match.index, contentOffset: end + (block.text[end] === "\n" ? 1 : 0),
+        number: Number(match[1]), total: Number(match[2])});
     }
   }
 
@@ -150,7 +152,7 @@ function formattedPartition(content: readonly OutputBlock[]): readonly OutputPar
   for (const [index, marker] of markers.entries()) {
     const end = markers[index + 1] ?? {index: content.length, offset: 0};
     parts.push(Object.freeze({kind: "formatted", ordinal: parts.length, printedIndex: marker.number,
-      printedTotal: total, segments: select(marker, end)}));
+      printedTotal: total, segments: select({index: marker.index, offset: marker.contentOffset}, end)}));
   }
   return Object.freeze(parts);
 }
@@ -190,9 +192,6 @@ export function outputPartPreview(output: ScriptOutput, selected: OutputPart): s
   const first = selected.segments.find(segment => segment.kind === "text");
   if (!first || first.kind !== "text") return undefined;
   const text = output.content[first.index]!.text as string;
-  const markerEnd = selected.kind === "formatted" ? text.indexOf("\n", first.from) : -1;
-  if (selected.kind === "formatted" && (markerEnd < 0 || markerEnd >= first.to)) return undefined;
-  const from = markerEnd >= 0 && markerEnd < first.to ? markerEnd + 1 : first.from;
-  const newline = text.indexOf("\n", from);
-  return text.slice(from, newline >= 0 ? Math.min(newline, first.to) : first.to);
+  const newline = text.indexOf("\n", first.from);
+  return text.slice(first.from, newline >= 0 ? Math.min(newline, first.to) : first.to);
 }
