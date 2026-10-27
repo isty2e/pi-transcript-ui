@@ -58,7 +58,7 @@ class SectionRow implements Component, DisclosureTarget {
   }
   private makeHeader() {
     return this.scope.toolkit.row((_width, format) => " ".repeat(this.scope.headingIndent) +
-      format({ marker: this.expanded ? "▾" : "▸", action: this.role === "source" ? "Source" : "Script output",
+      format({ marker: this.expanded ? "▾" : "▸", action: this.role === "source" ? "Call" : "Script output",
         rest: this.role === "source" ? "" : ` (${this.scope.outputCount} ${this.scope.formattedOutput ? "sections" : "items"})` }));
   }
   reconfigure(): void { this.headerValue.dispose(); this.headerValue = this.makeHeader(); }

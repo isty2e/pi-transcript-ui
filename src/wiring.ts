@@ -453,7 +453,7 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
       ...(itemProjection ? { action: phase === "pending" ? "Run code" : phase === "running" ? "Running code" : "Ran code" } : {}),
       marker: tool.expanded ? "▾" : "▸" }, isError)}`;
   }, options.getTheme, options.displayLimits?.rowMaxWidth);
-  // Items mode paints the live call slot only through its separate Source row.
+  // Items mode paints the live call slot only through its separate Call row.
   const body: Component & { readonly children: Component[] } = {
     get children() { return children.read(); },
     render: (width) => native(() => originalRender.call(tool, width)),

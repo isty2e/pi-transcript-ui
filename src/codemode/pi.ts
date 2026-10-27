@@ -5,7 +5,8 @@ import type { DisplayLimits } from "../display.js";
 import type { NativeToolComponent } from "../wiring.js";
 import { CodemodeFacts, evidenceHandle, type EvidenceHandle, type MatchedTerminal, type ScriptOutput } from "./model.js";
 import { CodemodeOutputObserver } from "./output-observer.js";
-import { outputPartContent, type OutputPart, type OutputWitness } from "./output.js";
+import { formattedOutput } from "./output-format.js";
+import { outputPartContent, type OutputBlock, type OutputPart, type OutputWitness } from "./output.js";
 
 export interface Appearance { showImages: boolean; imageWidthCells: number; outputPad: number }
 interface Host extends NativeToolComponent {
@@ -16,7 +17,7 @@ interface Host extends NativeToolComponent {
 interface Mode {
   ui: { requestRender(): void };
   sessionManager: ExtensionContext["sessionManager"];
-  session: { extensionRunner: { resolveToolRenderers(name: string, base: () => undefined): ToolRenderers | undefined }; getToolDefinition(name: string): unknown };
+  session: { getToolDefinition(name: string): unknown };
   settingsManager: { getShowImages(): boolean; getImageWidthCells(): number };
   outputPad: number;
   toolOutputExpanded: boolean;
@@ -177,7 +178,6 @@ export class CodemodeRuntime {
       typeof value.getRegisteredToolDefinition !== "function" || !isRecord(value.settingsManager) ||
       typeof value.settingsManager.getShowImages !== "function" || typeof value.settingsManager.getImageWidthCells !== "function" ||
       typeof value.outputPad !== "number" || typeof value.toolOutputExpanded !== "boolean" || !isRecord(value.session) ||
-      !isRecord(value.session.extensionRunner) || typeof value.session.extensionRunner.resolveToolRenderers !== "function" ||
       typeof value.session.getToolDefinition !== "function") return undefined;
     return value as unknown as Mode;
   }
@@ -246,14 +246,14 @@ export class CodemodeRuntime {
     if (!binding) return;
     this.bindings.delete(parent);
     this.outputs.delete(binding.facts);
-    binding.facts.dispose(); this.prune(binding.facts);
+    binding.clearOutput(); binding.facts.dispose(); this.prune(binding.facts);
     const execution = this.executions.get(parent.toolCallId);
     if (execution?.facts === binding.facts) { execution.eligible = false; execution.facts.closeCapture(); }
   }
   stop(): void {
     this.active = false;
     this.outputObserver?.dispose(); this.outputObserver = undefined; this.outputs = new WeakMap();
-    for (const binding of this.bindings.values()) binding.facts.dispose();
+    for (const binding of this.bindings.values()) { binding.clearOutput(); binding.facts.dispose(); }
     this.bindings.clear(); this.executions.clear(); this.payloads.clear(); this.completed.clear();
     this.context = undefined; this.root = undefined; this.indexed = false;
   }
@@ -263,13 +263,24 @@ export class CodemodeRuntime {
 export class CodemodeParent {
   onChange: () => void = () => {};
   private readonly codeSchema: boolean;
+  private displayOutput: {source: ScriptOutput; content: ReturnType<typeof formattedOutput>} | undefined;
   constructor(readonly runtime: CodemodeRuntime, readonly parent: NativeToolComponent, public facts: CodemodeFacts) {
     const parameters = runtime.parameters("codemode");
     this.codeSchema = isRecord(parameters) && isRecord(parameters.properties) &&
       isRecord(parameters.properties.code) && parameters.properties.code.type === "string";
   }
-  changed(): void { this.onChange(); }
-  replaceFacts(facts: CodemodeFacts): void { if (this.facts === facts) return; this.facts.dispose(); this.runtime.prune(this.facts); this.facts = facts; this.changed(); }
+  clearOutput(): void { this.displayOutput = undefined; }
+  changed(): void {
+    if (this.displayOutput?.source !== this.facts.output) this.clearOutput();
+    this.onChange();
+  }
+  replaceFacts(facts: CodemodeFacts): void {
+    if (this.facts === facts) return;
+
+    this.clearOutput(); this.facts.dispose(); this.runtime.prune(this.facts);
+
+    this.facts = facts; this.changed();
+  }
   observe(): void {
     this.facts.observe(this.parent.result, this.parent.isPartial,
       this.parent.isPartial ? undefined : this.runtime.takeOutput(this.facts));
@@ -292,9 +303,7 @@ export class CodemodeParent {
     const tool = "request" in input ? this.runtime.input(input) : undefined;
     if ("request" in input && !tool) throw new Error("Completed invocation unavailable");
     const outputName = "pi-transcript-ui:codemode-output";
-    const selected = tool ? mode.getRegisteredToolDefinition(tool.name)
-      : mode.session.getToolDefinition(outputName) ? undefined : mode.session.extensionRunner.resolveToolRenderers(outputName, () => undefined);
-    const definition = tool ? selected : { ...(selected ?? {}), renderCall: () => new Text("", 0, 0) };
+    const definition = tool ? mode.getRegisteredToolDefinition(tool.name) : { renderCall: () => new Text("", 0, 0) };
     const Constructor = this.parent.constructor as unknown as BodyConstructor;
     let alive = true, suspended = false;
     const host = new Constructor(tool?.name ?? outputName, tool?.id ?? this.parent.toolCallId, tool?.args ?? {},
@@ -302,7 +311,12 @@ export class CodemodeParent {
     const nativeInvalidate = host.invalidate.bind(host), nativeExpanded = host.setExpanded.bind(host);
     host.invalidate = () => { if (alive && !suspended) { nativeInvalidate(); invalidate(); } };
     const output = "request" in input ? undefined : this.facts.output;
-    const content = "segments" in input ? outputPartContent(output!, input) : output?.content;
+    let content: readonly OutputBlock[] | undefined;
+    if (output && !("request" in input)) {
+      if (this.displayOutput?.source !== output) this.displayOutput = { source: output, content: formattedOutput(output) };
+      content = this.displayOutput.content?.get(input) ??
+        ("segments" in input ? outputPartContent(output, input) : output.content);
+    }
     host.updateResult(tool?.result ?? { content, details: output?.fullOutputPath === undefined ? {} : { fullOutputPath: output.fullOutputPath },
       isError: this.facts.outcome?.isError === true }, false);
     nativeExpanded(expanded);

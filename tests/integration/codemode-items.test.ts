@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { InteractiveMode, AssistantMessageComponent, ToolExecutionComponent, createReadTool, createBashTool, createCodemodeExtension, initTheme,
-  type ExtensionAPI, type ExtensionContext, type ToolDefinition, type ToolRenderers } from "@earendil-works/pi-coding-agent";
+  type ExtensionAPI, type ExtensionContext, type ToolDefinition, type ToolRenderers, type ToolRendererResolver } from "@earendil-works/pi-coding-agent";
 import { Container, MouseRegion, Text, stripTerminalSequences, visibleWidth, getCapabilities, setCapabilities, type Component } from "@earendil-works/pi-tui";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -14,13 +14,14 @@ import { theme } from "../fixtures/pi-theme.js";
 initTheme("dark", false);
 const cleanups: (() => void)[] = [];
 const isImageLine = (line: string) => line.includes("\x1b_G");
-afterEach(() => { for (const cleanup of cleanups.splice(0).reverse()) cleanup(); vi.useRealTimers(); });
+afterEach(() => { for (const cleanup of cleanups.splice(0).reverse()) cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 const header = { type: "text" as const, text: "Script completed\nWall time 0.1 seconds\nOutput:\n" };
 const call = (id: string, name = "read", status = "ok") => ({ id, name, status, args: '{"path":"preview' });
 const result = (calls: unknown[], text?: string) => ({ content: [header, ...(text === undefined ? [] : [{ type: "text" as const, text }])], details: { calls }, isError: false });
 
 function fixture(options: { expanded?: boolean; containerExpanded?: boolean; colored?: boolean; oldId?: string; child?: ToolRenderers; accessorChildren?: boolean; codemodeRegistered?: boolean;
-  layout?: DisplayLimits["codemode"]; groupCodemode?: boolean; nativeCode?: boolean; output?: ToolRenderers } = {}) {
+  layout?: DisplayLimits["codemode"]; groupCodemode?: boolean; nativeCode?: boolean; output?: ToolRenderers; noOutputResolver?: boolean;
+  renderer?: ToolRendererResolver } = {}) {
   const handlers = new Map<string, ((event: Record<string, unknown>) => void)[]>();
   const root = new Container(), chat = new Container(); root.addChild(chat);
   const accessorChildren = (container: Container) => {
@@ -69,21 +70,26 @@ function fixture(options: { expanded?: boolean; containerExpanded?: boolean; col
   const context = { mode: "tui", sessionManager } as unknown as ExtensionContext;
   runtime.start(context); runtime.setRoot(root);
   const genericResult = vi.fn((value: { content: { type: string; text?: string }[] }) => new Text(value.content.map(block => block.text ?? "").join("\n"), 0, 0));
+  const resolveOutput = vi.fn((name: string, base: () => ToolRenderers | undefined) => {
+    if (options.renderer) return options.renderer(name, base);
+    const native = base();
+    return name === "pi-transcript-ui:codemode-output" && !native ? options.output ?? { renderResult: genericResult } : native;
+  });
   const mode = {
     ui: root, sessionManager, toolOutputExpanded: options.expanded ?? false,
     get outputPad() { return pad; },
     settingsManager: { getShowImages: () => showImages, getImageWidthCells: () => 60 },
-    session: { getToolDefinition: (name: string) => definitions.get(name), extensionRunner: {
-      resolveToolRenderers(name: string, base: () => ToolRenderers | undefined) {
-        return name === "pi-transcript-ui:codemode-output" ? options.output ?? { renderResult: genericResult } : base();
-      },
-    } },
+    session: { getToolDefinition: (name: string) => definitions.get(name), extensionRunner: { resolveToolRenderers: resolveOutput } },
     getRegisteredToolDefinition(name: string): ToolRenderers | undefined {
       const lookup = Reflect.get(InteractiveMode.prototype, "getRegisteredToolDefinition") as (this: unknown, name: string) => ToolRenderers | undefined;
       return lookup.call(this, name);
     },
   };
   const definition = mode.getRegisteredToolDefinition("codemode");
+  if (options.noOutputResolver) {
+    Reflect.deleteProperty(mode.session.extensionRunner, "resolveToolRenderers");
+    mode.getRegisteredToolDefinition = name => definitions.get(name);
+  }
   const presentation = new CodemodePresentation(runtime);
   const attach = () => attachTranscriptPresentation(root, {
     getTheme: () => options.colored ? theme : ({ bold: (s: string) => s, fg: (_kind, s: string) => s }), requestRender: requests,
@@ -105,7 +111,7 @@ function fixture(options: { expanded?: boolean; containerExpanded?: boolean; col
   });
   const render = () => chat.render(100).map(stripTerminalSequences).join("\n");
   cleanups.push(() => { detach(); presentation.dispose(); runtime.shutdown(); });
-  return { root, chat, parent, runtime, presentation, requests, emit, start, nestedStart, nestedEnd, render, mode, genericResult, definitions,
+  return { root, chat, parent, runtime, presentation, requests, emit, start, nestedStart, nestedEnd, render, mode, genericResult, resolveOutput, definitions,
     async run(code: string, beforeEnd?: () => void, beforeDisplay?: () => void) {
       if (!codeDefinition.execute) throw new Error("Native executor unavailable");
       parent.updateArgs({code}); start();
@@ -166,9 +172,12 @@ describe("independent native codemode items", () => {
     ]);
     expect(members.every(target => !target.expanded)).toBe(true);
     expect(h.genericResult).not.toHaveBeenCalled();
-    members[0]!.setExpanded(true); h.render();
-    expect(h.genericResult.mock.calls.at(-1)![0].content).toEqual([{type: "text", text: "A"}]);
-    expect(h.genericResult.mock.calls.every(([value]) => value.content.every(block => block.text === "A"))).toBe(true);
+    members[0]!.setExpanded(true);
+    const opened = h.render().split("\n").map(line => line.trim());
+    expect(opened).toContain("A");
+    expect(opened).not.toContain("B"); expect(opened).not.toContain("C");
+    expect(h.genericResult).not.toHaveBeenCalled();
+    expect(h.resolveOutput.mock.calls.map(([name]) => name)).not.toContain("pi-transcript-ui:codemode-output");
     output!.setExpanded(false); h.render(); expect(h.targets()).toEqual([parent, source, output]);
     output!.setExpanded(true); h.render(); expect(members[0]!.expanded).toBe(true);
     parent!.setExpanded(false); h.render(); expect(h.targets()).toEqual([parent]);
@@ -184,16 +193,17 @@ describe("independent native codemode items", () => {
     section.setExpanded(true); h.render();
     const members = h.targets().filter(target => target.parent === section);
     expect(members.map(target => target.label)).toEqual(["  ▸ Output 1/2 — A", "  ▸ Output 2/2 — B"]);
-    members[1]!.setExpanded(true); h.render();
-    expect(h.genericResult.mock.calls.at(-1)![0].content).toEqual([{type: "text", text: "B"}]);
+    members[1]!.setExpanded(true);
+    expect(h.render().split("\n").map(line => line.trim())).toContain("B");
+    expect(h.render().split("\n").map(line => line.trim())).not.toContain("A");
     expect(Reflect.get(h.parent, "result").content[1].text).toBe("==> text 1/2 <==\nA\n==> text 2/2 <==\nB");
 
     const malformed = fixture();
     const original = "==> text 1/3 <==\nA\n==> text 3/3 <==\nC";
     malformed.parent.updateResult(result([], original), false); malformed.render();
     expect(malformed.targets().at(-1)!.label).toBe("  ▸ Script output");
-    malformed.targets().at(-1)!.setExpanded(true); malformed.render();
-    expect(malformed.genericResult.mock.calls.at(-1)![0].content).toEqual([{type: "text", text: original}]);
+    malformed.targets().at(-1)!.setExpanded(true);
+    expect(malformed.render().split("\n").map(line => line.trimEnd()).join("\n")).toContain(original);
   });
 
   it("keeps terminal controls and empty decorative separators out of collapsed output headings", async () => {
@@ -209,8 +219,10 @@ describe("independent native codemode items", () => {
     expect(members[0]!.label).toContain("VISIBLE");
     expect(members[1]!.label.trim()).toBe("▸ Text 2");
     expect(h.genericResult).not.toHaveBeenCalled();
-    members[0]!.setExpanded(true); h.render();
-    expect(h.genericResult.mock.calls.at(-1)![0].content).toEqual([{type: "text", text: payload}]);
+    members[0]!.setExpanded(true);
+    expect(h.render().split("\n").map(line => line.trim())).toContain("VISIBLE");
+    expect(h.chat.render(100).join("\n")).not.toContain("\x1b]52;");
+    expect(h.genericResult).not.toHaveBeenCalled();
   });
 
   it("can disclose an empty formatted section without painting its numbered header", () => {
@@ -221,39 +233,38 @@ describe("independent native codemode items", () => {
     expect(empty.label.trim()).toBe("▸ Output 2/2");
     empty.setExpanded(true);
     expect(() => h.render()).not.toThrow();
-    expect(h.genericResult.mock.calls.at(-1)![0].content).toEqual([]);
+    expect(h.render()).not.toContain("==> text");
+    expect(h.genericResult).not.toHaveBeenCalled();
   });
 
   it("applies native bulk defaults and image/padding settings to lazy output members", async () => {
-    const h = fixture({nativeCode: true, expanded: true, output: {
-      renderResult(_value, _options, _theme, ctx) { return new Text(`CTX:${ctx.outputPad}:${ctx.showImages}`, 0, 0); },
-    }});
+    const h = fixture({nativeCode: true, expanded: true});
     h.padding(2); h.showImages(false);
     await h.run("text('A'); text('B');"); h.render();
     expect(h.targets().every(target => target.expanded)).toBe(true);
     const output = h.targets().find(target => target.label.includes("Script output"))!;
     const members = h.targets().filter(target => target.parent === output);
     expect(members).toHaveLength(2);
-    expect(h.render().split("\n").filter(line => line.trim() === "CTX:2:false")).toHaveLength(2);
+    const bodies = () => members.map(member => (member as unknown as {children: Component[]}).children[1]!.render(100));
+    const native = (value: string, pad: number) => {
+      const host = new ToolExecutionComponent("unused", "unused", {}, {outputPad: pad, showImages: false},
+        {renderCall: () => new Text("", 0, 0)}, {requestRender: h.requests} as never, "/tmp");
+      host.updateResult({content: [{type: "text", text: value}], isError: false}); host.setExpanded(true);
+      return host.render(100);
+    };
+    expect(bodies()).toEqual([native("A", 2), native("B", 2)]);
     const scope = h.chat.children[0] as Component & {setExpanded(value: boolean): void};
     scope.setExpanded(false); h.render(); expect(h.targets()).toHaveLength(1);
     scope.setExpanded(true); h.render(); expect(h.targets().every(target => target.expanded)).toBe(true);
     h.padding(0); h.showImages(true); h.render();
-    expect(h.render().split("\n").filter(line => line.trim() === "CTX:0:true")).toHaveLength(2);
+    expect(bodies()).toEqual([native("A", 0), native("B", 0)]);
   });
 
-  it("preserves renderer-local controls per output member and fences callbacks after removal", async () => {
-    const invalidations: (() => void)[] = [];
-    const h = fixture({nativeCode: true, output: {renderShell: "self",
-      renderResult(value, _options, _theme, ctx) {
-        invalidations.push(ctx.invalidate);
-        const payload = value.content.filter(block => block.type === "text").map(block => block.text).join("");
-        return new MouseRegion(new Text(`${payload} CONTROL ${ctx.state.detail ? "ON" : "OFF"}`, 0, 0), event => {
-          if (event.type !== "click") return undefined;
-          ctx.state.detail = !ctx.state.detail; ctx.invalidate(); return {handled: true};
-        });
-      },
-    }});
+  it("uses native text disclosure per output member and fences native callbacks after removal", async () => {
+    const foreignCall = vi.fn(() => new Text("FOREIGN CALL", 0, 0));
+    const foreignResult = vi.fn(() => new Text("FOREIGN RESULT", 0, 0));
+    const updates = vi.spyOn(ToolExecutionComponent.prototype, "updateResult");
+    const h = fixture({nativeCode: true, output: {renderCall: foreignCall, renderResult: foreignResult}});
     await h.run("text('A'); text('B');"); h.render();
     const parent = h.targets()[0]!, output = h.targets().at(-1)!;
     output.setExpanded(true); h.render();
@@ -261,19 +272,28 @@ describe("independent native codemode items", () => {
     for (const member of members) member.setExpanded(true);
     h.render();
     const component = members[0] as unknown as Component;
-    const lines = component.render(100).map(stripTerminalSequences), y = lines.findIndex(line => line.includes("A CONTROL OFF"));
+    const lines = component.render(100).map(stripTerminalSequences), y = lines.findIndex(line => line.trim() === "A");
     expect(y).toBeGreaterThan(0);
     component.handleMouse?.({type: "click", button: "left", x: 0, y, width: 100, height: lines.length,
       screenX: 0, screenY: y, shift: false, alt: false, ctrl: false});
-    expect(h.render()).toContain("A CONTROL ON"); expect(h.render()).toContain("B CONTROL OFF");
+    h.render();
+    expect(members.map(member => member.expanded)).toEqual([false, true]);
+    expect(h.render().split("\n").map(line => line.trim())).not.toContain("A");
+    expect(h.render().split("\n").map(line => line.trim())).toContain("B");
     parent.setExpanded(false); h.render(); parent.setExpanded(true);
-    expect(h.render()).toContain("A CONTROL ON"); expect(h.render()).toContain("B CONTROL OFF");
-    const stale = invalidations.at(-1)!;
+    h.render(); expect(members.map(member => member.expanded)).toEqual([false, true]);
+    const hosts = updates.mock.contexts.filter((host): host is ToolExecutionComponent => host instanceof ToolExecutionComponent && host !== h.parent);
+    expect(hosts).toHaveLength(2);
     h.chat.children = []; h.render();
     const before = h.requests.mock.calls.length;
-    stale();
+    for (const host of hosts) {
+      host.invalidate();
+      (Reflect.get(host, "ui") as {requestRender(): void}).requestRender();
+    }
     expect(h.requests).toHaveBeenCalledTimes(before);
     expect(h.targets()).toEqual([]);
+    expect(foreignCall).not.toHaveBeenCalled(); expect(foreignResult).not.toHaveBeenCalled();
+    expect(h.resolveOutput.mock.calls.map(([name]) => name)).not.toContain("pi-transcript-ui:codemode-output");
   });
 
   it("keeps native-only output intact and can use formatted regions when later switched to items", async () => {
@@ -283,6 +303,83 @@ describe("independent native codemode items", () => {
     expect(h.genericResult).not.toHaveBeenCalled();
     h.layout("items"); h.render();
     expect(h.targets().at(-1)!.label).toContain("2 sections");
+  });
+
+  it("observes and displays formatted output without a generic-renderer resolver on the host", async () => {
+    const h = fixture({nativeCode: true, expanded: true, noOutputResolver: true});
+    const original = await h.run('text({a:1}); return [2,3];');
+    const before = structuredClone(original);
+    const visible = h.render().split("\n").map(line => line.trimEnd()).join("\n");
+    expect(visible).toContain('{\n  "a": 1\n}');
+    expect(visible).toContain('[\n  2,\n  3\n]');
+    const section = h.targets().find(target => target.label.includes("Script output"))!;
+    expect(section.label).toContain("2 items");
+    expect(h.targets().filter(target => target.parent === section).map(target => target.label.trim()))
+      .toEqual(['▾ Text 1 — {"a":1}', '▾ Return value — [2,3]']);
+    expect(original).toEqual(before);
+    expect(Reflect.get(h.parent, "result").content).toEqual(original.content);
+  });
+
+  it("does not resolve or display an invocation for output even when its private name is a real tool", () => {
+    const h = fixture({expanded: true});
+    const renderCall = vi.fn(() => new Text("REAL TOOL CALL", 0, 0));
+    const renderResult = vi.fn(() => new Text("REAL TOOL RESULT", 0, 0));
+    h.definitions.set("pi-transcript-ui:codemode-output", {name: "pi-transcript-ui:codemode-output", parameters: {}, renderCall, renderResult});
+    const raw = Array.from({length: 18}, (_, i) => `supplied-${i}`).join("\n");
+    h.parent.updateResult(result([], raw), false);
+    const visible = h.render();
+    expect(visible).toContain("supplied-0"); expect(visible).toContain("supplied-17");
+    expect(visible).not.toContain("pi-transcript-ui:codemode-output");
+    expect(visible).not.toContain("REAL TOOL");
+    expect(renderCall).not.toHaveBeenCalled(); expect(renderResult).not.toHaveBeenCalled();
+
+    const real = h.tool("pi-transcript-ui:codemode-output", "real", {});
+    real.updateResult({content: [{type: "text", text: "original"}], isError: false}); real.setExpanded(true);
+    const rendered = real.render(100).map(stripTerminalSequences).join("\n");
+    expect(rendered).toContain("REAL TOOL CALL"); expect(rendered).toContain("REAL TOOL RESULT");
+    expect(renderCall).toHaveBeenCalled(); expect(renderResult).toHaveBeenCalled();
+  });
+
+  it("reuses one final-output projection across sibling opens and preserves Original mode", async () => {
+    const h = fixture({nativeCode: true});
+    const raw = '{"n":9007199254740993,"n":1e400}';
+    await h.run(`text(${JSON.stringify(raw)}); text('[1,2]');`);
+    const parse = vi.spyOn(JSON, "parse");
+    h.render(); const section = h.targets().at(-1)!;
+    section.setExpanded(true); h.render();
+    const members = h.targets().filter(target => target.parent === section);
+    members[1]!.setExpanded(true); h.render();
+    members[0]!.setExpanded(true);
+    expect(h.render().split("\n").map(line => line.trimEnd()).join("\n")).toContain('{\n  "n": 9007199254740993,\n  "n": 1e400\n}');
+    for (const member of members) { member.setExpanded(false); h.render(); member.setExpanded(true); h.render(); }
+    expect(parse.mock.calls.filter(([value]) => value === raw)).toHaveLength(1);
+    expect(parse.mock.calls.filter(([value]) => value === "[1,2]")).toHaveLength(1);
+    const content = structuredClone(Reflect.get(h.parent, "result").content);
+    h.layout("native"); const original = h.render();
+    expect(original).toContain("ORIGINAL-AGGREGATE"); expect(original).toContain(raw);
+    expect(Reflect.get(h.parent, "result").content).toEqual(content);
+    h.layout("items"); h.render();
+    const restored = h.targets().find(target => target.label.includes("Script output"))!;
+    restored.setExpanded(true); h.render();
+    for (const target of h.targets().filter(target => target.parent === restored)) target.setExpanded(true);
+    h.render();
+    expect(parse.mock.calls.filter(([value]) => value.trimEnd() === raw)).toHaveLength(1);
+  });
+
+  it("memoizes raw fallback and replaces it when the parent receives new sealed facts", () => {
+    const h = fixture({expanded: true});
+    const raw = "[".repeat(250) + "0" + "]".repeat(250);
+    h.parent.updateResult(result([], raw), false);
+    const parse = vi.spyOn(JSON, "parse");
+    h.render(); const output = h.targets().at(-1)!;
+    output.setExpanded(false); h.render(); output.setExpanded(true); h.render();
+    expect(parse.mock.calls.filter(([value]) => value === raw)).toHaveLength(1);
+    h.parent.updateResult(result([], '{"new":2}'), true); h.start();
+    h.parent.updateResult(result([], '{"new":2}'), false);
+    const visible = h.render().split("\n").map(line => line.trimEnd()).join("\n");
+    expect(visible).toContain('{\n  "new": 2\n}');
+    expect(visible).not.toContain(raw);
+    expect(parse.mock.calls.filter(([value]) => value === '{"new":2}')).toHaveLength(1);
   });
 
   it.each(["before-end", "before-display"])("rejects staged observation when the parent becomes ambiguous %s", async when => {
@@ -301,17 +398,15 @@ describe("independent native codemode items", () => {
   });
 
   it("does not pass incomplete appearance settings into cached bodies when the host is unavailable", async () => {
-    const preferences: {pad: number; images: boolean}[] = [];
-    const h = fixture({nativeCode: true, expanded: true, output: {
-      renderResult(_value, _options, _theme, ctx) {
-        preferences.push({pad: ctx.outputPad, images: ctx.showImages}); return new Text("BODY", 0, 0);
-      },
-    }});
+    const updates = vi.spyOn(ToolExecutionComponent.prototype, "updateResult");
+    const h = fixture({nativeCode: true, expanded: true});
     await h.run("text('A'); text('B');"); h.render();
-    const before = preferences.length;
+    const hosts = updates.mock.contexts.filter((host): host is ToolExecutionComponent => host instanceof ToolExecutionComponent && host !== h.parent);
+    expect(hosts).toHaveLength(2);
+    const preferences = hosts.map(host => vi.spyOn(host, "setOutputPad"));
     h.runtime.setRoot(new Container());
     expect(() => h.padding(3)).not.toThrow();
-    expect(preferences).toHaveLength(before);
+    for (const preference of preferences) expect(preference).not.toHaveBeenCalled();
     expect(h.render()).toContain(" (original)");
   });
 
@@ -325,14 +420,14 @@ describe("independent native codemode items", () => {
     h.targets()[0]!.setExpanded(true);
     const opened = h.render();
     expect(opened).toContain("▾ Ran code");
-    expect(opened).toContain("▸ Source");
+    expect(opened).toContain("▸ Call");
     expect(opened).toContain("▸ Script output");
     expect(h.targets()).toHaveLength(4);
     expect(h.targets().slice(1).every(target => !target.expanded)).toBe(true);
     expect(opened).not.toMatch(/SOURCE CONTROL|CHILD-RESULT|SCRIPT-OUTPUT/);
   });
 
-  it("keeps Source, native code controls and sibling disclosure independent through parent folding", () => {
+  it("keeps Call, native code controls and sibling disclosure independent through parent folding", () => {
     const h = fixture(); h.start(); h.nestedStart("p/1"); h.nestedEnd("p/1");
     h.parent.updateResult(result([call("p/1")], "SCRIPT-OUTPUT"), false); h.render();
     const [parent, source, child, output] = h.targets();
@@ -527,15 +622,16 @@ describe("independent native codemode items", () => {
     h.render(); expect(h.targets()[0]!.kind).toBe("group");
   });
 
-  it("projects separate source/activity/output targets using actual native bodies and generic result dispatch", () => {
+  it("projects separate call/activity/output targets using actual renderers and native output display", () => {
     const h = fixture({ expanded: true }); h.start(); h.nestedStart("p/1"); h.nestedEnd("p/1");
     h.parent.updateResult(result([call("p/1")], "SCRIPT-OUTPUT"), false);
     const visible = h.render();
-    expect(visible).toContain("Ran code"); expect(visible).toContain("Source");
+    expect(visible).toContain("Ran code"); expect(visible).toContain("Call");
     expect(visible).toContain("CHILD-RESULT"); expect(visible).toContain("SCRIPT-OUTPUT");
     expect(visible).not.toContain("ORIGINAL-AGGREGATE"); expect(visible).not.toContain("USER-CODE");
     expect(h.targets().map(target => target.label)).toHaveLength(4);
-    expect(h.genericResult).toHaveBeenCalled();
+    expect(h.genericResult).not.toHaveBeenCalled();
+    expect(h.resolveOutput.mock.calls.map(([name]) => name)).not.toContain("pi-transcript-ui:codemode-output");
     h.parent.setExpanded(false);
     expect(h.render()).not.toContain("CHILD-RESULT"); expect(h.render()).not.toContain("SCRIPT-OUTPUT");
     h.parent.setExpanded(true);
@@ -694,7 +790,7 @@ describe("independent native codemode items", () => {
     restored.updateResult(result([call("p/1")], "HISTORY-OUTPUT"), false); restored.setExpanded(true);
     h.chat.addChild(restored);
     const visible = h.render();
-    expect(visible).toContain("Ran code"); expect(visible).toContain("Source"); expect(visible).toContain("HISTORY-OUTPUT");
+    expect(visible).toContain("Ran code"); expect(visible).toContain("Call"); expect(visible).toContain("HISTORY-OUTPUT");
     expect(visible).toContain("Detailed result unavailable"); expect(visible).not.toContain("LIVE-PAYLOAD");
 
     h.parent.updateResult(result([call("p/1")]), false);
@@ -828,6 +924,36 @@ describe("independent native codemode items", () => {
     expect(rendered).toContain("REQUEST-DIFF"); expect(rendered).toContain("APPLIED-RECEIPT");
   });
 
+  it("keeps actual-call shared state and separate previous components through output formatting and reflow", () => {
+    const callStates: object[] = [], resultStates: object[] = [], callSlots: Component[] = [], resultSlots: Component[] = [];
+    let invalidate: (() => void) | undefined;
+    const h = fixture({expanded: true, child: {
+      renderCall(_args, _theme, ctx) {
+        callStates.push(ctx.state);
+        const component = ctx.lastComponent instanceof Text ? ctx.lastComponent : new Text("", 0, 0);
+        component.setText(ctx.state.applied ? "APPLIED CALL DIFF" : "PENDING CALL"); callSlots.push(component);
+        return component;
+      },
+      renderResult(_value, _options, _theme, ctx) {
+        resultStates.push(ctx.state); invalidate = ctx.invalidate;
+        ctx.state.applied = true;
+        const component = ctx.lastComponent instanceof Text ? ctx.lastComponent : new Text("APPLIED RECEIPT", 0, 0);
+        resultSlots.push(component); return component;
+      },
+    }});
+    h.start(); h.nestedStart("p/1"); h.nestedEnd("p/1");
+    h.parent.updateResult(result([call("p/1")], '{"value":1}'), false);
+    h.render(); h.render();
+    expect(h.render()).toContain("APPLIED CALL DIFF"); expect(h.render()).toContain("APPLIED RECEIPT");
+    expect(h.render().split("\n").map(line => line.trimEnd()).join("\n")).toContain('{\n  "value": 1\n}');
+    const before = h.requests.mock.calls.length;
+    invalidate!(); expect(h.requests.mock.calls.length).toBeGreaterThan(before);
+    h.chat.render(40); h.padding(2); h.render();
+    expect(new Set([...callStates, ...resultStates]).size).toBe(1);
+    expect(new Set(callSlots).size).toBe(1); expect(new Set(resultSlots).size).toBe(1);
+    expect(callSlots[0]).not.toBe(resultSlots[0]);
+  });
+
   it("fences late renderer invalidation and public events after removal and session shutdown", () => {
     let invalidate: (() => void) | undefined;
     const h = fixture({ expanded: true, child: { renderResult(_value, _options, _theme, ctx) { invalidate = ctx.invalidate; return new Text("RICH", 0, 0); } } });
@@ -862,22 +988,52 @@ describe("independent native codemode items", () => {
     expect(refreshed).not.toContain("OLD-FRAME");
   });
 
-  it("keeps native image rendering outside a text-only generic result renderer", () => {
+  it("keeps native images and preferences beside formatted text without changing original blocks", () => {
     const before = getCapabilities(); setCapabilities({ ...before, images: "kitty" });
     try {
       const h = fixture({ expanded: true }); h.start();
       const image = { type: "image" as const, mimeType: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jB9kAAAAASUVORK5CYII=" };
-      h.parent.updateResult({ content: [header, image], details: { calls: [] }, isError: false });
+      const native = { content: [header, {type: "text", text: '{"image":true}'}, image], details: { calls: [] }, isError: false };
+      const beforeContent = structuredClone(native.content);
+      h.parent.updateResult(native);
       expect(h.chat.render(100).filter(isImageLine)).toHaveLength(1);
+      expect(h.render().split("\n").map(line => line.trimEnd()).join("\n")).toContain('{\n  "image": true\n}');
       h.showImages(false);
       expect(h.chat.render(100).filter(isImageLine)).toHaveLength(0);
       h.showImages(true);
       expect(h.chat.render(100).filter(isImageLine)).toHaveLength(1);
+      expect(native.content).toEqual(beforeContent);
     } finally { setCapabilities(before); }
   });
 });
 
 const compositorSource = process.env["PI_ALT_COMPOSITOR_SOURCE"];
+const toolViewsSource = process.env["PI_TOOL_VIEWS_SOURCE"];
+it.skipIf(!toolViewsSource)("keeps actual Tool Views call renderers while output uses the native display path", async () => {
+  const {default: install} = await import(pathToFileURL(join(toolViewsSource!, "src/index.ts")).href) as {default(pi: ExtensionAPI): void};
+  let renderer: ToolRendererResolver | undefined;
+  const shutdown: (() => void)[] = [];
+  install({
+    registerToolRenderer(value: ToolRendererResolver) { renderer = value; },
+    registerCommand() {},
+    on(event: string, callback: () => void) { if (event === "session_shutdown") shutdown.push(callback); return () => {}; },
+  } as unknown as ExtensionAPI);
+  cleanups.push(() => { for (const stop of shutdown) stop(); });
+  expect(renderer).toBeDefined();
+  const names: string[] = [];
+  const h = fixture({expanded: true, renderer: (name, next) => { names.push(name); return renderer!(name, next); }});
+  h.start(); h.nestedStart("p/1"); h.nestedEnd("p/1");
+  const native = result([call("p/1")], '{"value":1}'), before = structuredClone(native);
+  h.parent.updateResult(native, false);
+  const rendered = h.render().split("\n").map(line => line.trimEnd()).join("\n");
+  expect(rendered).toContain("Call"); expect(rendered).toContain("Script output");
+  expect(rendered).toContain('{\n  "value": 1\n}');
+  expect(names).toContain("codemode"); expect(names).toContain("read");
+  expect(names).not.toContain("pi-transcript-ui:codemode-output");
+  expect(rendered).not.toContain("pi-transcript-ui:codemode-output");
+  expect(native).toEqual(before);
+});
+
 it.skipIf(!compositorSource)("preserves independent codemode controls and appearance changes through the reference compositor cache", async () => {
   const load = (path: string) => import(pathToFileURL(join(compositorSource!, "src", path)).href);
   const [{ ChildRenderCache }, { ComponentRangeMapper }, { CollapseController }] = await Promise.all([
@@ -906,6 +1062,31 @@ it.skipIf(!compositorSource)("preserves independent codemode controls and appear
   expect(reopened).not.toContain("CHILD-RESULT"); expect(reopened).not.toContain("SOURCE CONTROL");
   h.padding(3);
   expect(render().changed).toBe(true);
+});
+
+it.skipIf(!compositorSource)("refreshes formatted output height and independent hit ranges through the compositor cache", async () => {
+  const load = (path: string) => import(pathToFileURL(join(compositorSource!, "src", path)).href);
+  const [{ChildRenderCache}, {ComponentRangeMapper}, {CollapseController}] = await Promise.all([
+    load("terminal/render-cache.ts"), load("terminal/range-mapper.ts"), load("collapse/collapse-controller.ts"),
+  ]);
+  const h = fixture({expanded: true});
+  h.parent.updateResult(result([], '{"files":["a.ts","b.ts"],"count":2}'), false);
+  const cache = new ChildRenderCache(), mapper = new ComponentRangeMapper(), collapse = new CollapseController();
+  const render = (width = 100) => cache.render(h.root.children, width, collapse, mapper);
+  const open = render();
+  expect(open.lines.map((line: string) => stripTerminalSequences(line).trimEnd()).join("\n"))
+    .toContain('{\n  "files": [\n    "a.ts",\n    "b.ts"\n  ],\n  "count": 2\n}');
+  const ranges = mapper.buildRanges(h.root.children, 100, 0, 500, 0) as {component: object; startLine: number; lineCount: number}[];
+  const output = ranges.find(range => Reflect.get(range.component, "toolName") === "__codemode_output__")!;
+  expect(output.lineCount).toBeGreaterThan(7);
+  expect(collapse.toggleTool(output.component, output.startLine)).toBe(true);
+  const folded = render();
+  expect(folded.changed).toBe(true); expect(folded.lines.length).toBeLessThan(open.lines.length);
+  expect(folded.lines.join("\n")).not.toContain('"count": 2');
+  expect(collapse.toggleTool(output.component, output.startLine)).toBe(true);
+  expect(render().lines).toEqual(open.lines);
+  expect(render(20).changed).toBe(true);
+  expect(render(20).lines.every((line: string) => visibleWidth(line) <= 20)).toBe(true);
 });
 
 it.skipIf(!compositorSource)("refreshes compositor image output when native preferences change without a label change", async () => {
