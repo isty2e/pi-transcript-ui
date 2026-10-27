@@ -11,9 +11,29 @@ const display = (source: ScriptOutput) => formattedOutput(source)?.get(source) ?
 describe("script-output display formatting", () => {
   it("reflows nested containers, keeping empty containers inline and the body origin unchanged", () => {
     const source = output(text(' \r\n{ "files": ["a.ts", "b.ts"], "empty": { }, "other": [ ] }\t'));
-    expect(display(source)).toEqual([text('{\n  "files": [\n    "a.ts",\n    "b.ts"\n  ],\n  "empty": {},\n  "other": []\n}')]);
+    expect(display(source)).toEqual([text('{\n  "files": ["a.ts", "b.ts"],\n  "empty": {},\n  "other": []\n}')]);
     expect(display(output(text(" { } \n")))).toEqual([text("{}")]);
-    expect(display(output(text("[[], {}, [1]]")))).toEqual([text("[\n  [],\n  {},\n  [\n    1\n  ]\n]")]);
+    expect(display(output(text("[[], {}, [1]]")))).toEqual([text("[\n  [],\n  {},\n  [1]\n]")]);
+  });
+
+  it("keeps scalar arrays inline without rewriting escapes or numeric tokens", () => {
+    const source = output(text(String.raw`[9007199254740993,1e400,-0,1.2300e-07,"\u0061","[,{}] \"quote\" \\",true,false,null]`));
+    const expected = String.raw`[9007199254740993, 1e400, -0, 1.2300e-07, "\u0061", "[,{}] \"quote\" \\", true, false, null]`;
+    expect(display(source)).toEqual([text(expected)]);
+  });
+
+  it("only compacts scalar children when an array contains nested containers", () => {
+    const source = output(text('{"matrix":[[1,2],[3,4]],"rows":[{"values":[true,null]},{}]}'));
+    expect(display(source)).toEqual([text('{\n  "matrix": [\n    [1, 2],\n    [3, 4]\n  ],\n  "rows": [\n    {\n      "values": [true, null]\n    },\n    {}\n  ]\n}')]);
+  });
+
+  it("does not add one logical line per element to long scalar arrays", () => {
+    const values = Array.from({length: 1500}, (_, index) => String(index));
+    const source = output(text(`[${values.join(",")}]`));
+    const expected = `[${values.join(", ")}]`;
+    expect((display(source)[0]!.text as string).split("\n")).toHaveLength(1);
+    expect(display(source)).toEqual([text(expected)]);
+    expect(source.content).toEqual([text(`[${values.join(",")}]`)]);
   });
 
   it("preserves exact number and string tokens, duplicates and key order", () => {
@@ -75,7 +95,7 @@ describe("script-output display formatting", () => {
     const parts = source.parts!, before = parts.map(part => outputPartContent(source, part));
     const result = formattedOutput(source)!;
     expect(result.get(parts[0]!)).toEqual([text('{\n  "a": 1\n}')]);
-    expect(result.get(parts[1]!)).toEqual([text('[\n  2,\n  3\n]')]);
+    expect(result.get(parts[1]!)).toEqual([text('[2, 3]')]);
     expect(parts.map(part => outputPartContent(source, part))).toEqual(before);
     expect(source.content).toEqual([text(raw)]);
     expect(result.get(source)).toBeUndefined();
@@ -105,7 +125,7 @@ describe("script-output display formatting", () => {
   });
 
   it("counts generated and existing lines across all blocks", () => {
-    const atLimit = output(text(`[${Array.from({length: 1998}, () => "0").join(",")}]`));
+    const atLimit = output(text(`[${Array.from({length: 1998}, () => "{}").join(",")}]`));
     expect((display(atLimit)[0]!.text as string).split("\n")).toHaveLength(2000);
     const over = output(...atLimit.content, text("one more block"));
     expect(formattedOutput(over)).toBeUndefined();
@@ -124,7 +144,7 @@ describe("script-output display formatting", () => {
   });
 
   it("falls back as one result rather than giving each fragment a separate formatting quota", () => {
-    const section = `[${Array.from({length: 1100}, () => "0").join(",")}]`;
+    const section = `[${Array.from({length: 1100}, () => "{}").join(",")}]`;
     const raw = `==> text 1/2 <==\n${section}\n==> text 2/2 <==\n${section}`;
     const source = scriptOutput({content: [text(raw)]})!;
     expect(source.parts).toHaveLength(2);

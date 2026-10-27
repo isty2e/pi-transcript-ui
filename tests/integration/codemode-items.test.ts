@@ -311,7 +311,7 @@ describe("independent native codemode items", () => {
     const before = structuredClone(original);
     const visible = h.render().split("\n").map(line => line.trimEnd()).join("\n");
     expect(visible).toContain('{\n  "a": 1\n}');
-    expect(visible).toContain('[\n  2,\n  3\n]');
+    expect(visible).toContain('[2, 3]');
     const section = h.targets().find(target => target.label.includes("Script output"))!;
     expect(section.label).toContain("2 items");
     expect(h.targets().filter(target => target.parent === section).map(target => target.label.trim()))
@@ -338,6 +338,22 @@ describe("independent native codemode items", () => {
     const rendered = real.render(100).map(stripTerminalSequences).join("\n");
     expect(rendered).toContain("REAL TOOL CALL"); expect(rendered).toContain("REAL TOOL RESULT");
     expect(renderCall).toHaveBeenCalled(); expect(renderResult).toHaveBeenCalled();
+  });
+
+  it("lets the native component wrap long scalar arrays while retaining every value", () => {
+    const h = fixture({expanded: true});
+    const values = Array.from({length: 1500}, (_, index) => index);
+    const native = result([], JSON.stringify(values)), before = structuredClone(native.content);
+    h.parent.updateResult(native, false);
+    const lines = h.chat.render(80).map(stripTerminalSequences);
+    expect(lines.length).toBeLessThan(values.length);
+    expect(lines.every(line => visibleWidth(line) <= 80)).toBe(true);
+    const selected = h.targets().at(-1)!;
+    const body = (selected as unknown as {children: Component[]}).children[1]!.render(80).map(stripTerminalSequences);
+    const displayed = body.map(line => line.trim()).join(" ");
+    const tokens = displayed.match(/\d+/g)?.map(Number);
+    expect(tokens).toEqual(values);
+    expect(native.content).toEqual(before);
   });
 
   it("reuses one final-output projection across sibling opens and preserves Original mode", async () => {
@@ -1075,10 +1091,10 @@ it.skipIf(!compositorSource)("refreshes formatted output height and independent 
   const render = (width = 100) => cache.render(h.root.children, width, collapse, mapper);
   const open = render();
   expect(open.lines.map((line: string) => stripTerminalSequences(line).trimEnd()).join("\n"))
-    .toContain('{\n  "files": [\n    "a.ts",\n    "b.ts"\n  ],\n  "count": 2\n}');
+    .toContain('{\n  "files": ["a.ts", "b.ts"],\n  "count": 2\n}');
   const ranges = mapper.buildRanges(h.root.children, 100, 0, 500, 0) as {component: object; startLine: number; lineCount: number}[];
   const output = ranges.find(range => Reflect.get(range.component, "toolName") === "__codemode_output__")!;
-  expect(output.lineCount).toBeGreaterThan(7);
+  expect(output.lineCount).toBeGreaterThan(4);
   expect(collapse.toggleTool(output.component, output.startLine)).toBe(true);
   const folded = render();
   expect(folded.changed).toBe(true); expect(folded.lines.length).toBeLessThan(open.lines.length);

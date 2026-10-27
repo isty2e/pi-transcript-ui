@@ -15,33 +15,53 @@ function whitespace(char: string | undefined): boolean {
   return char === " " || char === "\n" || char === "\r" || char === "\t";
 }
 
+function stringEnd(text: string, from: number): number {
+  let index = from + 1;
+  while (index < text.length) {
+    const char = text[index++]!;
+    if (char === "\\") index++;
+    else if (char === '"') break;
+  }
+  return index;
+}
+
+function scalarArrayEnd(text: string, from: number): number {
+  for (let index = from + 1; index < text.length; index++) {
+    const char = text[index]!;
+    if (char === '"') index = stringEnd(text, index) - 1;
+    else if (char === "[" || char === "{") return -1;
+    else if (char === "]") return index;
+  }
+  return -1;
+}
+
 // JSON.parse validates grammar; this pass preserves the original token spellings.
 function reflow(text: string, append: (token: string, indent: number) => boolean): boolean {
-  let depth = 0, previous = "";
+  let depth = 0, previous = "", inlineEnd = -1;
   for (let index = 0; index < text.length;) {
     const char = text[index]!;
     if (whitespace(char)) { index++; continue; }
     if (char === '"') {
-      const from = index++;
-      while (index < text.length) {
-        const next = text[index++]!;
-        if (next === "\\") index++;
-        else if (next === '"') break;
-      }
+      const from = index;
+      index = stringEnd(text, from);
       if (!append(text.slice(from, index), 0)) return false;
     } else if (char === "{" || char === "[") {
+      if (char === "[") inlineEnd = scalarArrayEnd(text, index);
       if (!append(char, 0)) return false;
       depth++; index++;
       let next = index;
       while (whitespace(text[next])) next++;
-      if (text[next] !== "}" && text[next] !== "]" && !append("\n", depth)) return false;
+      if (inlineEnd < 0 && text[next] !== "}" && text[next] !== "]" && !append("\n", depth)) return false;
     } else if (char === "}" || char === "]") {
+      const compact = index === inlineEnd;
       depth--; index++;
-      if (previous !== "{" && previous !== "[" && !append("\n", depth)) return false;
+      if (!compact && previous !== "{" && previous !== "[" && !append("\n", depth)) return false;
       if (!append(char, 0)) return false;
+      if (compact) inlineEnd = -1;
     } else if (char === "," || char === ":") {
       index++;
-      if (!append(char === ":" ? ": " : ",", 0) || (char === "," && !append("\n", depth))) return false;
+      if (!append(char === ":" ? ": " : inlineEnd < 0 ? "," : ", ", 0)) return false;
+      if (char === "," && inlineEnd < 0 && !append("\n", depth)) return false;
     } else {
       const from = index++;
       while (index < text.length && !whitespace(text[index]) && !",]}".includes(text[index]!)) index++;
