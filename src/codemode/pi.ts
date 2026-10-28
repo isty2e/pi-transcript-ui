@@ -1,6 +1,6 @@
 import * as Pi from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext, ToolRenderers } from "@earendil-works/pi-coding-agent";
-import { Text, type Box, type Component } from "@earendil-works/pi-tui";
+import { Box, Text, type Component } from "@earendil-works/pi-tui";
 import { isRecord } from "../intent.js";
 import type { DisplayLimits } from "../display.js";
 import type { NativeToolComponent } from "../wiring.js";
@@ -482,10 +482,20 @@ export class CodemodeParent {
     const host = new Constructor(tool?.name ?? outputName, tool?.id ?? this.parent.toolCallId, tool?.args ?? {},
       this.runtime.appearance(), definition, { requestRender: () => { if (usable()) invalidate(); } }, this.parent.cwd);
     if (!tool) {
-      const box = host.children[1] as (Component & Partial<Pick<Box, "setBgFn">>) | undefined;
-      if (typeof box?.setBgFn !== "function") throw new Error("Native output frame unavailable");
-      const updateDisplay = host.updateDisplay.bind(host), clearBackground = box.setBgFn.bind(box);
-      host.updateDisplay = () => { updateDisplay(); clearBackground(); };
+      const nativeFrame = host.children[1] as Box | undefined;
+      if (!nativeFrame || !Array.isArray(nativeFrame.children) || typeof nativeFrame.setPaddingX !== "function")
+        throw new Error("Native output frame unavailable");
+
+      const displayFrame = new Box(0, 0), updateDisplay = host.updateDisplay.bind(host);
+      host.children[1] = displayFrame;
+      host.updateDisplay = () => {
+        updateDisplay();
+        const outputPad: unknown = Reflect.get(host, "outputPad");
+        if (typeof outputPad !== "number") throw new Error("Native output padding unavailable");
+
+        displayFrame.children = nativeFrame.children;
+        displayFrame.setPaddingX(outputPad);
+      };
     }
     const nativeInvalidate = host.invalidate.bind(host), nativeExpanded = host.setExpanded.bind(host);
     host.invalidate = () => { if (usable()) { nativeInvalidate(); invalidate(); } };

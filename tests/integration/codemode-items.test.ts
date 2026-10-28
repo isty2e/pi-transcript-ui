@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { InteractiveMode, AssistantMessageComponent, ToolExecutionComponent, SessionManager, createReadTool, createWriteTool, createBashTool, createCodemodeExtension, initTheme,
   type ExtensionAPI, type ExtensionContext, type ToolDefinition, type ToolRenderers, type ToolRendererResolver } from "@earendil-works/pi-coding-agent";
-import { Container, MouseRegion, Text, stripTerminalSequences, visibleWidth, getCapabilities, setCapabilities, type Component } from "@earendil-works/pi-tui";
+import { Box, Container, Image, MouseRegion, Text, stripTerminalSequences, visibleWidth, getCapabilities, setCapabilities, type Component } from "@earendil-works/pi-tui";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -199,15 +199,49 @@ describe("inline native body framing", () => {
     const output = h.targets().find(target => target.label.includes("Script output"))!;
     const body = (output as unknown as {children: Component[]}).children[1]!;
     expect(body.render(100).some(line => /\x1b\[48[;:]/.test(line))).toBe(false);
+    expect(body.render(100).map(stripTerminalSequences).map(line => line.trimEnd())).toEqual(["{", '  "value": 1', "}"]);
     expect(h.render()).toContain('"value": 1');
     h.padding(3); h.showImages(false); h.render(); body.invalidate(); h.render();
     const refreshed = body.render(100);
     expect(refreshed.some(line => /\x1b\[48[;:]/.test(line))).toBe(false);
-    expect(refreshed.map(stripTerminalSequences).find(line => line.includes('"value"'))?.startsWith("     ")).toBe(true);
+    expect(refreshed.map(stripTerminalSequences).map(line => line.trimEnd())).toEqual(["   {", '     "value": 1', "   }"]);
+
+    body.handleMouse?.({type: "click", button: "left", x: 3, y: 0, width: 100, height: refreshed.length,
+      screenX: 3, screenY: 0, shift: false, alt: false, ctrl: false});
+    expect(output.expanded).toBe(false);
 
     const actual = h.tool("plain", "actual", {});
     actual.updateResult({content: [{type: "text", text: "ACTUAL BODY"}], isError}); actual.setExpanded(true);
     expect(actual.render(100).some(line => /\x1b\[48[;:]/.test(line))).toBe(true);
+  });
+
+  it("preserves payload blank lines and indentation without adding frame padding", () => {
+    const h = fixture({expanded: true});
+    h.parent.updateResult(result([], "\n  KEEP\n\nTAIL\n"), false); h.render();
+    const output = h.targets().find(target => target.label.includes("Script output"))!;
+    const body = (output as unknown as {children: Component[]}).children[1]!;
+    expect(body.render(100).map(stripTerminalSequences).map(line => line.trimEnd()))
+      .toEqual(["", "  KEEP", "", "TAIL", ""]);
+  });
+
+  it.each([false, true])("retains native image spacing without output-frame padding (text: %s)", text => {
+    const before = getCapabilities(); setCapabilities({...before, images: "kitty"});
+    vi.spyOn(Image.prototype, "render").mockReturnValue(["NATIVE IMAGE"]);
+    try {
+      const h = fixture({expanded: true});
+      const image = {type: "image" as const, mimeType: "image/png",
+        data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jB9kAAAAASUVORK5CYII="};
+      h.parent.updateResult({...result([], text ? "TEXT" : undefined),
+        content: [header, ...(text ? [{type: "text" as const, text: "TEXT"}] : []), image]}, false);
+      h.render();
+      const output = h.targets().find(target => target.label.includes("Script output"))!;
+      const body = (output as unknown as {children: Component[]}).children[1] as Component & {readonly children: Component[]};
+      const expected = [...(text ? ["TEXT"] : []), "", "NATIVE IMAGE"];
+      const lines = () => body.render(100).map(stripTerminalSequences).map(line => line.trimEnd());
+      expect(lines()).toEqual(expected);
+      expect(body.children.flatMap(child => child.render(100)).map(stripTerminalSequences).map(line => line.trimEnd())).toEqual(expected);
+      body.invalidate(); h.render(); expect(lines()).toEqual(expected);
+    } finally { setCapabilities(before); }
   });
 });
 
@@ -628,7 +662,9 @@ describe("independent native codemode items", () => {
       const host = new ToolExecutionComponent("unused", "unused", {}, {outputPad: pad, showImages: false},
         {renderCall: () => new Text("", 0, 0)}, {requestRender: h.requests} as never, "/tmp");
       host.updateResult({content: [{type: "text", text: value}], isError: false}); host.setExpanded(true);
-      return host.render(100).slice(1).map(stripTerminalSequences);
+      const frame = new Box(pad, 0);
+      frame.children = (host.children[1] as Box).children;
+      return frame.render(100).map(stripTerminalSequences);
     };
     expect(bodies()).toEqual([native("A", 2), native("B", 2)]);
     const scope = h.chat.children[0] as Component & {setExpanded(value: boolean): void};
