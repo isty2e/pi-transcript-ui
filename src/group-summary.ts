@@ -14,6 +14,7 @@ export interface GroupMemberSummary {
   readonly metrics: SummaryMetrics;
   readonly outputLines: number | undefined;
   readonly shellSession: boolean;
+  readonly completion?: "unknown" | "cancelled" | undefined;
 }
 
 interface GroupSelectionInput {
@@ -84,8 +85,11 @@ export function groupSummary(input: GroupSummaryInput): LineParts {
   const quantity = files === undefined ? `${members.length} ${verb.unit}` : `${files} ${files === 1 ? "file" : "files"}`;
   const repeated = files !== undefined && files < members.length;
   const failed = members.filter(member => member.phase === "settled" && member.isError).length;
+  const unknown = members.filter(member => member.completion === "unknown").length;
+  const cancelled = members.filter(member => member.completion === "cancelled").length;
+  const action = verb[(unknown || cancelled) && done ? "pending" : phase];
   const failure = failed ? { count: failed, offset: ` ${quantity} — `.length } : undefined;
-  const prefix = ` ${quantity}${failed ? ` — ${failureText(failed)}` : ""}`;
+  const prefix = ` ${quantity}${failed ? ` — ${failureText(failed)}` : ""}${cancelled ? ` — ${cancelled} cancelled` : ""}${unknown ? ` — ${unknown} completion unknown` : ""}`;
 
   const requests = members.map(member => member.capabilities.patch);
   if (requests.length && requests.every(request => request !== undefined)) {
@@ -95,7 +99,7 @@ export function groupSummary(input: GroupSummaryInput): LineParts {
     }), { added: 0, removed: 0 }) : undefined;
     return {
       marker: expanded ? "▾" : "▸",
-      action: verb[phase],
+      action,
       rest: `${prefix} ${requestedPatchText(delta, targets)}${done ? "" : "…"}`,
       ...(failure ? { failure } : {}),
     };
@@ -130,7 +134,7 @@ export function groupSummary(input: GroupSummaryInput): LineParts {
 
   return {
     marker: expanded ? "▾" : "▸",
-    action: verb[phase],
+    action,
     rest: `${prefix}${metric ? ` ${metric}` : ""}${done ? "" : "…"}`,
     ...(change ? { change } : {}),
     ...(failure ? { failure } : {}),

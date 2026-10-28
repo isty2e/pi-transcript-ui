@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { InteractiveMode, AssistantMessageComponent, ToolExecutionComponent, createReadTool, createBashTool, createCodemodeExtension, initTheme,
+import { InteractiveMode, AssistantMessageComponent, ToolExecutionComponent, SessionManager, createReadTool, createWriteTool, createBashTool, createCodemodeExtension, initTheme,
   type ExtensionAPI, type ExtensionContext, type ToolDefinition, type ToolRenderers, type ToolRendererResolver } from "@earendil-works/pi-coding-agent";
 import { Container, MouseRegion, Text, stripTerminalSequences, visibleWidth, getCapabilities, setCapabilities, type Component } from "@earendil-works/pi-tui";
 import { join } from "node:path";
@@ -21,7 +21,7 @@ const result = (calls: unknown[], text?: string) => ({ content: [header, ...(tex
 
 function fixture(options: { expanded?: boolean; containerExpanded?: boolean; colored?: boolean; oldId?: string; child?: ToolRenderers; accessorChildren?: boolean; codemodeRegistered?: boolean;
   layout?: DisplayLimits["codemode"]; groupCodemode?: boolean; nativeCode?: boolean; output?: ToolRenderers; noOutputResolver?: boolean;
-  renderer?: ToolRendererResolver } = {}) {
+  renderer?: ToolRendererResolver; history?: SessionManager } = {}) {
   const handlers = new Map<string, ((event: Record<string, unknown>) => void)[]>();
   const root = new Container(), chat = new Container(); root.addChild(chat);
   const accessorChildren = (container: Container) => {
@@ -61,7 +61,7 @@ function fixture(options: { expanded?: boolean; containerExpanded?: boolean; col
   ]);
   if (options.codemodeRegistered === false) definitions.delete("codemode");
   let layout: DisplayLimits["codemode"] = options.layout ?? "items", pad = 0, showImages = true;
-  const sessionManager = { getEntries: () => options.oldId ? [{ type: "message", message: { role: "toolResult", toolCallId: options.oldId } }] : [] };
+  const sessionManager = options.history ?? { getEntries: () => options.oldId ? [{ type: "message", message: { role: "toolResult", toolCallId: options.oldId } }] : [] };
   const api = {
     on(type: string, handler: (event: Record<string, unknown>) => void) { const list = handlers.get(type) ?? []; list.push(handler); handlers.set(type, list); },
     getAllTools: () => [...definitions.values()],
@@ -135,6 +135,140 @@ function fixture(options: { expanded?: boolean; containerExpanded?: boolean; col
     padding(value: number) { pad = value; for (const child of chat.children) if ("setOutputPad" in child) (child as { setOutputPad(value: number): void }).setOutputPad(value); },
   };
 }
+
+type StoredCalls = NonNullable<Extract<Parameters<SessionManager["appendMessage"]>[0], {role: "toolResult"}>["nestedCalls"]>;
+const savedParent = (records: ReturnType<typeof call>[], nestedCalls: StoredCalls, id = "p") => ({
+  ...result(records), details: {calls: records}, role: "toolResult" as const, toolCallId: id, toolName: "codemode", timestamp: 0, nestedCalls,
+});
+const assistantCall = (id: string): Extract<Parameters<SessionManager["appendMessage"]>[0], {role: "assistant"}> => ({
+  role: "assistant", content: [{type: "toolCall", id, name: "codemode", arguments: {code: "return 1"}}],
+  api: "openai-responses", provider: "openai", model: "fixture", stopReason: "toolUse", timestamp: 0,
+  usage: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+    cost: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0}},
+});
+
+describe("retained Codemode request summaries", () => {
+  it("uses independently retained requests even for an incomplete inventory, without inventing bodies or measured totals", () => {
+    const h = fixture({expanded: true, layout: "flat"});
+    const message = savedParent([{...call("p/1"), args: '{"path":"/preview.ts","limit":1}'}], {
+      complete: false, calls: [{id: "p/1", name: "read", arguments: {path: "/saved.ts", offset: 4, limit: 2}, status: "ok"}],
+    });
+    h.parent.updateResult(message, false); h.render();
+    const label = h.targets().find(target => target.label.includes("/saved.ts"))!.label;
+    expect(label).toContain("Read /saved.ts (requested lines 4–5)");
+    expect(label).not.toContain("/preview.ts"); expect(label).not.toContain("(0 lines)");
+    expect(h.render()).toContain("Detailed result unavailable"); expect(h.genericResult).not.toHaveBeenCalled();
+  });
+
+  it.each(["duplicate", "wrong name", "invalid arguments", "present undefined"])("does not backfill a conflicting retained source from an older preview: %s", variant => {
+    const h = fixture({layout: "flat"});
+    const entry = {id: "p/1", name: "read", arguments: {path: "/saved.ts"}, status: "ok" as const};
+    if (variant === "wrong name") entry.name = "bash";
+    if (variant === "invalid arguments") Object.defineProperty(entry, "arguments", {value: null});
+    if (variant === "present undefined") Object.defineProperty(entry, "arguments", {value: undefined});
+    const message = savedParent([{...call("p/1"), args: '{"path":"/preview.ts","limit":2}'}], {
+      complete: true, calls: variant === "duplicate" ? [entry, {...entry}] : [entry],
+    });
+    h.parent.updateResult(message, false); h.render();
+    const label = h.targets().find(target => target.label.includes("/preview.ts"))!.label;
+    expect(label).not.toContain("Read /preview.ts"); expect(label).not.toContain("requested");
+    expect(h.targets()).toHaveLength(3);
+  });
+
+  it("uses a valid partial producer preview only when retained arguments were omitted", () => {
+    const h = fixture({layout: "flat"});
+    h.parent.updateResult(savedParent([{...call("p/1"), args: '{"path":"/preview.ts","offset":7,"limit":2,...'}], {
+      complete: false, calls: [{id: "p/1", name: "read", argumentsBytes: 90_000, status: "ok"}],
+    }), false); h.render();
+    expect(h.targets().some(target => target.label.includes("Read /preview.ts (requested lines 7–8)"))).toBe(true);
+  });
+
+  it("keeps native activity cancellation and final unknown completion independent of retained status vocabulary", () => {
+    const h = fixture({expanded: true});
+    h.parent.updateResult(savedParent([call("p/1", "read", "running"), call("p/2", "read", "cancelled")], {
+      complete: false, calls: [
+        {id: "p/1", name: "read", arguments: {path: "/same.ts"}, status: "ok"},
+        {id: "p/2", name: "read", arguments: {path: "/same.ts"}, status: "unfinished"},
+      ],
+    }), false); h.render();
+    const labels = h.targets().map(target => target.label);
+    expect(labels.some(label => label.includes("read /same.ts — completion unknown"))).toBe(true);
+    expect(labels.some(label => label.includes("Read /same.ts — cancelled"))).toBe(true);
+    const group = h.targets().find(target => target.kind === "group")!;
+    expect(group.label).toContain("1 file"); expect(group.label).toContain("1 completion unknown");
+    expect(group.label).toContain("1 cancelled");
+    group.setExpanded(false); h.render(); expect(group.expanded).toBe(false);
+    expect(labels.some(label => label.includes("1 running"))).toBe(false);
+  });
+
+  it.each(["declaration update", "duplicate declaration", "duplicate result"])("does not borrow an ambiguous declaration: %s", variant => {
+    const history = SessionManager.inMemory("/tmp");
+    history.appendMessage({role: "system", content: "", timestamp: 0,
+      toolsAdded: [{name: "operation", description: "", parameters: createReadTool("/tmp").parameters}]});
+    const assistant = assistantCall("p");
+    if (variant === "duplicate declaration") assistant.content.push(...assistantCall("p").content);
+    history.appendMessage(assistant);
+    if (variant === "declaration update") history.appendMessage({role: "system", content: "", timestamp: 0,
+      toolsAdded: [{name: "operation", description: "", parameters: createWriteTool("/tmp").parameters}]});
+    const message = savedParent([call("p/1", "operation")], {
+      complete: true, calls: [{id: "p/1", name: "operation", arguments: {path: "/ambiguous.ts", limit: 2}, status: "ok"}],
+    });
+    history.appendMessage(message);
+    if (variant === "duplicate result") history.appendMessage({...message});
+    const h = fixture({history, layout: "flat"}); h.parent.updateResult(message, false); h.render();
+    expect(h.targets().some(target => /(?:Read|Write) \/ambiguous\.ts/.test(target.label))).toBe(false);
+    expect(h.targets().some(target => target.label.includes("operation"))).toBe(true);
+  });
+
+  it("does not reinterpret retained parents using a later compaction checkpoint", () => {
+    const history = SessionManager.inMemory("/tmp");
+    history.appendMessage({role: "system", content: "", timestamp: 0,
+      toolsAdded: [{name: "operation", description: "read", parameters: createReadTool("/tmp").parameters}]});
+    const kept = history.appendMessage(assistantCall("p"));
+    const message = savedParent([call("p/1", "operation")], {
+      complete: true, calls: [{id: "p/1", name: "operation", arguments: {path: "/before.ts", limit: 2}, status: "ok"}],
+    });
+    history.appendMessage(message);
+    history.appendMessage({role: "system", content: "", timestamp: 0,
+      toolsAdded: [{name: "operation", description: "write", parameters: createWriteTool("/tmp").parameters}]});
+    history.appendCompaction("retained calls", kept, 0);
+    const h = fixture({history, layout: "flat"});
+    h.parent.updateResult(message, false); h.render();
+    expect(h.targets().some(target => target.label.includes("Read /before.ts (requested lines 1–2)"))).toBe(true);
+    expect(h.targets().some(target => target.label.includes("Write /before.ts"))).toBe(false);
+  });
+
+  it("uses declarations at the exact parent occurrence, not a later registry or another parent's schema", () => {
+    const history = SessionManager.inMemory("/tmp");
+    const schema = createReadTool("/tmp").parameters;
+    history.appendMessage({role: "system", content: "", timestamp: 0, toolsAdded: [{name: "operation", description: "", parameters: schema}]});
+    history.appendMessage(assistantCall("p"));
+    const first = savedParent([call("p/1", "operation")], {
+      complete: true, calls: [{id: "p/1", name: "operation", arguments: {path: "/first.ts", limit: 2}, status: "ok"}],
+    });
+    history.appendMessage(first);
+    const h = fixture({history, layout: "flat"});
+    h.definitions.set("operation", {name: "operation", parameters: createWriteTool("/tmp").parameters});
+    h.parent.updateResult(first, false); h.render();
+    expect(h.targets().some(target => target.label.includes("Read /first.ts (requested lines 1–2)"))).toBe(true);
+
+    history.appendMessage({role: "system", content: "", timestamp: 0, toolsAdded: [{name: "operation", description: "", parameters: createWriteTool("/tmp").parameters}]});
+    history.appendMessage(assistantCall("q"));
+    const second = savedParent([call("q/1", "operation")], {
+      complete: true, calls: [{id: "q/1", name: "operation", arguments: {path: "/second.ts", content: "one\n"}, status: "ok"}],
+    }, "q");
+    history.appendMessage(second);
+    const next = h.tool("codemode", "q", {code: "return 1"}); next.setExpanded(true); h.chat.addChild(next); next.updateResult(second, false); h.render();
+    expect(h.targets().some(target => target.label.includes("Write /second.ts (requested 1 line)"))).toBe(true);
+    expect(h.targets().some(target => target.label.includes("Read /first.ts"))).toBe(true);
+
+    const scans = vi.spyOn(history, "getBranch");
+    h.layout("items"); h.render();
+    expect(scans).not.toHaveBeenCalled();
+    const clone = {...second}; next.updateResult(clone, false); h.render();
+    expect(h.targets().some(target => target.label.includes("Write /second.ts"))).toBe(false);
+  });
+});
 
 describe("independent native codemode items", () => {
   it("reuses the captured native host without leaving another lookup hook installed", () => {

@@ -8,7 +8,7 @@ import type { ToolPhase } from "../tool-phase.js";
 import type { NativeToolComponent } from "../wiring.js";
 import type { ActivityRecord, MatchedTerminal, ParentOutcome, ScriptOutput } from "./model.js";
 import { outputPartPreview, type OutputPart } from "./output.js";
-import type { CodemodeParent, CodemodeRuntime, CompletedBody } from "./pi.js";
+import type { CodemodeParent, CodemodeRuntime, CompletedBody, ActivitySummarySource } from "./pi.js";
 import { summarizeActivity, type CodemodeSummary } from "./summary.js";
 
 export interface ItemDescription {
@@ -23,7 +23,8 @@ export interface GroupRow extends Component, DisclosureTarget {
 }
 export interface ItemToolkit {
   row(read: (width: number | undefined, format: (parts: LineParts, error?: boolean) => string) => string): Component & { readonly text: string; dispose(): void };
-  describe(record: ActivityRecord, matched: MatchedTerminal | undefined, parent: NativeToolComponent): ItemDescription;
+  describe(record: ActivityRecord, matched: MatchedTerminal | undefined, source: ActivitySummarySource | undefined,
+    parent: Readonly<{cwd: string | undefined; final: boolean}>): ItemDescription;
   group(id: string, classification: ToolClassification, members: () => readonly GroupMemberSummary[], parent: () => DisclosureTarget,
     indent: () => number): GroupRow;
   requestRender(): void;
@@ -137,10 +138,13 @@ class ItemRow implements Component, DisclosureTarget {
       this.body?.dispose(); this.body = undefined;
     }
     this.matched = matched;
-    this.description = this.scope.toolkit.describe(record, matched, this.scope.original);
+    const binding = this.scope.binding;
+    this.description = this.scope.toolkit.describe(record, matched, matched ? undefined : binding.summarySource(record),
+      {cwd: this.scope.original.cwd, final: binding.facts.final});
     this.metadata = new Text([
       record.preview === undefined ? undefined : `Arguments preview: ${record.preview}`,
       `Status: ${record.status}`, record.error,
+      record.status === "running" && binding.facts.final && !matched ? "Completion: unknown (parent finished without a terminal child observation)." : undefined,
       record.durationMs === undefined ? undefined : `Recorded duration: ${record.durationMs} ms`,
       record.cost === undefined ? undefined : `Cost: $${record.cost}`,
       "Detailed result unavailable for this recorded activity.",
@@ -230,7 +234,7 @@ export class CodemodeScope implements Component, CodemodeProjection {
     private parentVisible: () => boolean, key: string) {
     this.prefix = key;
     this.model = binding.facts;
-    binding.onChange = () => this.changed();
+    binding.onChange = () => { this.dataRevision = -1; this.changed(); };
     const scope = this;
     this.sourceBody = {
       get children() { const source = scope.sourceSlot ?? binding.source(); return source ? [source] : []; },
@@ -254,7 +258,14 @@ export class CodemodeScope implements Component, CodemodeProjection {
   get formattedOutput(): boolean { return this.binding.facts.output?.partition === "formatted"; }
   get summaryRevision(): number { return this.revision; }
   summary(phase: ToolPhase): CodemodeSummary {
-    return summarizeActivity(this.binding.facts.records, this.binding.facts.final ? "settled" : phase);
+    const confirmed = new Map<number, boolean>();
+    for (const record of this.binding.facts.records ?? []) {
+      if (record.status !== "running") continue;
+      const matched = this.binding.facts.matched(record);
+      const input = matched ? this.binding.runtime.input(matched) : undefined;
+      if (input) confirmed.set(record.ordinal, input.result.isError);
+    }
+    return summarizeActivity(this.binding.facts.records, this.binding.facts.final ? "settled" : phase, confirmed);
   }
   private layoutState(): string {
     let appearance = "unavailable";

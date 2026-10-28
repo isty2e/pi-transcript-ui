@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
-import { codemodeSummary } from "../src/codemode/summary.js";
+import { codemodeSummary, summarizeActivity } from "../src/codemode/summary.js";
+import { activityRecords } from "../src/codemode/model.js";
 import { codemodeLine, joinLine } from "../src/display.js";
 
 const summarize = (calls: unknown, isPartial = false) => codemodeSummary({
@@ -11,10 +12,20 @@ it("aggregates every observed status while bounding only the name preview", () =
   const calls = Array.from({ length: 1000 }, (_, index) => ({ name: ["read", "bash", "models.classify", "edit"][index % 4],
     status: ["ok", "running", "error", "cancelled"][index % 4] }));
   const before = structuredClone(calls);
-  const summary = summarize(calls);
+  const summary = summarize(calls, true);
   expect(summary.calls).toEqual({ total: 1000, running: 250, errors: 250, cancelled: 250,
     names: [{ name: "read", count: 250 }, { name: "bash", count: 250 }, { name: "models.classify", count: 250 }], moreNames: true });
   expect(calls).toEqual(before);
+});
+
+it("reports unconfirmed final activity as unknown, unless a matched terminal receipt confirms it", () => {
+  const records = activityRecords([{id: "p/1", name: "read", status: "running"}, {id: "p/2", name: "read", status: "running"}])!;
+  const final = summarizeActivity(records, "settled");
+  expect(final.calls).toMatchObject({running: 0, completionUnknown: 2, errors: 0});
+  expect(joinLine(codemodeLine({summary: final, isError: false}))).toContain("2 completion unknown");
+  expect(summarizeActivity(records, "settled", new Map([[0, false], [1, true]])).calls)
+    .toMatchObject({running: 0, errors: 1});
+  expect(records.map(record => record.status)).toEqual(["running", "running"]);
 });
 
 it.each([undefined, null, false, {}, [null], [{}], [{ name: "read", status: "done" }],

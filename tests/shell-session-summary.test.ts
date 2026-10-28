@@ -26,6 +26,17 @@ it("projects common requests without assuming shell language or process lifetime
   for (const chars of ["\n", " ", "\u0003", "help\n", "\\x03"]) expect(summarize("write_stdin", { session_id: 1, chars })).toEqual({ action: "Send input" });
 });
 
+it("does not treat missing truncated stdin alternatives as an empty polling request", () => {
+  const partial = (args: unknown, parameters: unknown = schema("write_stdin")) => shellSessionSummary({
+    toolName: "write_stdin", parameters, args, result: undefined, isPartial: false, completeRequest: false,
+  });
+  expect(partial({session_id: 1})).toBeUndefined();
+  expect(partial({session_id: 1, chars: ""})?.action).toBe("Check output");
+  expect(partial({session_id: 1, chars: "\n"})?.action).toBe("Send input");
+  expect(partial({session_id: 1, chars: ""}, schema("write_stdin", {chars_b64: {type: "string"}}))).toBeUndefined();
+  expect(partial({session_id: 1, chars: "", chars_b64: ""}, schema("write_stdin", {chars_b64: {type: "string"}}))?.action).toBe("Check output");
+});
+
 const chain = "cd /workspace/a/long/project/directory && npm run build --configuration lengthy-development-profile || printf '%s' fallback | head -n 20";
 const rawExecLine = (command: string, width = 120) => runningLine("exec_command",
   { action: "Run", target: { kind: "opaque-command", command } }, undefined, { width });

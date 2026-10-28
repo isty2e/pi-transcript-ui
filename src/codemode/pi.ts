@@ -1,9 +1,12 @@
-import { InteractiveMode, type ExtensionAPI, type ExtensionContext, type ToolRenderers } from "@earendil-works/pi-coding-agent";
+import * as Pi from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ToolRenderers } from "@earendil-works/pi-coding-agent";
 import { Text, type Component } from "@earendil-works/pi-tui";
 import { isRecord } from "../intent.js";
 import type { DisplayLimits } from "../display.js";
 import type { NativeToolComponent } from "../wiring.js";
-import { CodemodeFacts, evidenceHandle, type EvidenceHandle, type MatchedTerminal, type ScriptOutput } from "./model.js";
+import { CodemodeFacts, evidenceHandle, type ActivityRecord, type EvidenceHandle, type MatchedTerminal, type ScriptOutput } from "./model.js";
+import { argumentPreview } from "./argument-preview.js";
+import type { SummaryRequest } from "../tool-summary.js";
 import { CodemodeOutputObserver } from "./output-observer.js";
 import { formattedOutput } from "./output-format.js";
 import { outputPartContent, type OutputBlock, type OutputPart, type OutputWitness } from "./output.js";
@@ -45,6 +48,26 @@ export interface CompletedBody extends Component {
   suspend(value: boolean): void;
   dispose(): void;
 }
+export type ActivitySummarySource = Readonly<{kind: "preview"; request: SummaryRequest | undefined}> |
+  Readonly<{kind: "history"; request: SummaryRequest | undefined; parameters: unknown}>;
+type StoredRequest = Readonly<{name: string; request: SummaryRequest | undefined; supplied: boolean}>;
+interface HistoryRequests {
+  readonly source: object;
+  readonly calls: ReadonlyMap<string, StoredRequest | undefined>;
+  readonly parameters: ReadonlyMap<string, unknown>;
+}
+interface HistoricalDeclaration { readonly id: string; readonly name: string; readonly parameters: ReadonlyMap<string, unknown> }
+
+function recordedRequest(args: unknown): SummaryRequest | undefined {
+  try {
+    if (!isRecord(args) || ![null, Object.prototype].includes(Object.getPrototypeOf(args))) return undefined;
+    const descriptors = Object.getOwnPropertyDescriptors(args);
+    if (Object.values(descriptors).some(field => !("value" in field))) return undefined;
+    const copy = Object.create(null) as Record<string, unknown>;
+    for (const [key, field] of Object.entries(descriptors)) Object.defineProperty(copy, key, {value: field.value, enumerable: true});
+    return {args: Object.freeze(copy), complete: true, source: "recorded"};
+  } catch { return undefined; }
+}
 
 function renderable(value: unknown): value is Component {
   return isRecord(value) && typeof value.render === "function" && typeof value.invalidate === "function";
@@ -53,7 +76,7 @@ function renderable(value: unknown): value is Component {
 /** A short-lived observation of Pi's normal lookup, never an execution interceptor. */
 function discover(receive: (mode: unknown) => void): () => void {
   let prototype: object;
-  try { prototype = InteractiveMode.prototype; } catch { return () => {}; }
+  try { prototype = Pi.InteractiveMode.prototype; } catch { return () => {}; }
   const before = Object.getOwnPropertyDescriptor(prototype, "getRegisteredToolDefinition");
   if (!before || typeof before.value !== "function" || !before.configurable || !before.writable) return () => {};
   const original = before.value as (this: unknown, name: string) => unknown;
@@ -86,6 +109,8 @@ export class CodemodeRuntime {
   private outputs = new WeakMap<CodemodeFacts, {execution: Execution; witness: OutputWitness}>();
   private outputObserver: CodemodeOutputObserver | undefined;
   private releaseLookup: () => void;
+  private history: {manager: ExtensionContext["sessionManager"]; session: string; leaf: string | null;
+    sources: WeakMap<object, HistoricalDeclaration>} | undefined;
 
   constructor(private readonly pi: ExtensionAPI, readonly requested: () => DisplayLimits["codemode"]) {
     this.releaseLookup = discover(mode => { this.captured = mode; this.watchOutput(); });
@@ -186,6 +211,60 @@ export class CodemodeRuntime {
     if (!this.active) return undefined;
     return this.pi.getAllTools().find(tool => tool.name === name)?.parameters;
   }
+  historicalParameters(parent: NativeToolComponent, source: object): ReadonlyMap<string, unknown> {
+    try {
+      const manager = this.mode()?.sessionManager;
+      if (!manager || typeof Pi.buildSessionProjection !== "function") return new Map();
+      const leaf = manager.getLeafId(), session = manager.getSessionId();
+      if (this.history?.manager !== manager || this.history.leaf !== leaf || this.history.session !== session) {
+        const branch = manager.getBranch(), sources = new WeakMap<object, HistoricalDeclaration>();
+        let parameters = new Map<string, unknown>(), dirty = true, conflicts = new Set<string>();
+        let calls = new Map<string, {name: string; parameters: ReadonlyMap<string, unknown>; result?: object} | undefined>();
+
+        for (const [position, entry] of branch.entries()) {
+          if (entry.type !== "message") {
+            if (entry.type === "compaction" || entry.type === "context_edit") dirty = true;
+            continue;
+          }
+          const message: unknown = entry.message;
+          if (!isRecord(message)) continue;
+          if (message.role === "system") {
+            for (const delta of [message.toolsRemoved, message.toolsAdded]) if (Array.isArray(delta)) {
+              dirty = true;
+              for (const tool of delta) if (isRecord(tool) && typeof tool.name === "string") conflicts.add(tool.name);
+            }
+          } else if (message.role === "assistant" && Array.isArray(message.content)) {
+            if (dirty) {
+              parameters = new Map();
+              for (const value of Pi.buildSessionProjection(branch.slice(0, position)).messages) {
+                const declaration: unknown = value;
+                if (!isRecord(declaration) || declaration.role !== "system") continue;
+                if (Array.isArray(declaration.toolsRemoved)) for (const tool of declaration.toolsRemoved) if (isRecord(tool) && typeof tool.name === "string") parameters.delete(tool.name);
+                if (Array.isArray(declaration.toolsAdded)) for (const tool of declaration.toolsAdded) if (isRecord(tool) && typeof tool.name === "string") parameters.set(tool.name, tool.parameters);
+              }
+              dirty = false;
+            }
+            calls = new Map(); conflicts = new Set();
+            for (const part of message.content) {
+              if (!isRecord(part) || part.type !== "toolCall" || typeof part.id !== "string" || typeof part.name !== "string") continue;
+              calls.set(part.id, calls.has(part.id) ? undefined : {name: part.name, parameters});
+            }
+          } else if (message.role === "toolResult" && typeof message.toolCallId === "string") {
+            const call = calls.get(message.toolCallId);
+            if (!call || call.name !== message.toolName) continue;
+            if (call.result) { sources.delete(call.result); calls.set(message.toolCallId, undefined); continue; }
+            call.result = message;
+            const applicable = conflicts.size ? new Map([...call.parameters].filter(([name]) => !conflicts.has(name))) : call.parameters;
+            sources.set(message, {id: message.toolCallId, name: call.name, parameters: applicable});
+          }
+        }
+        this.history = {manager, session, leaf, sources};
+      }
+      const declaration = this.history?.sources.get(source);
+      return declaration?.id === parent.toolCallId && declaration.name === parent.toolName ? declaration.parameters : new Map();
+    } catch { return new Map(); }
+  }
+
   appearance(): Appearance {
     const mode = this.mode();
     if (!mode) throw new Error("Codemode host unavailable");
@@ -246,14 +325,14 @@ export class CodemodeRuntime {
     if (!binding) return;
     this.bindings.delete(parent);
     this.outputs.delete(binding.facts);
-    binding.clearOutput(); binding.facts.dispose(); this.prune(binding.facts);
+    binding.clearPresentation(); binding.facts.dispose(); this.prune(binding.facts);
     const execution = this.executions.get(parent.toolCallId);
     if (execution?.facts === binding.facts) { execution.eligible = false; execution.facts.closeCapture(); }
   }
   stop(): void {
     this.active = false;
-    this.outputObserver?.dispose(); this.outputObserver = undefined; this.outputs = new WeakMap();
-    for (const binding of this.bindings.values()) { binding.clearOutput(); binding.facts.dispose(); }
+    this.outputObserver?.dispose(); this.outputObserver = undefined; this.outputs = new WeakMap(); this.history = undefined;
+    for (const binding of this.bindings.values()) { binding.clearPresentation(); binding.facts.dispose(); }
     this.bindings.clear(); this.executions.clear(); this.payloads.clear(); this.completed.clear();
     this.context = undefined; this.root = undefined; this.indexed = false;
   }
@@ -264,20 +343,22 @@ export class CodemodeParent {
   onChange: () => void = () => {};
   private readonly codeSchema: boolean;
   private displayOutput: {source: ScriptOutput; content: ReturnType<typeof formattedOutput>} | undefined;
+  private historyRequests: HistoryRequests | undefined;
   constructor(readonly runtime: CodemodeRuntime, readonly parent: NativeToolComponent, public facts: CodemodeFacts) {
     const parameters = runtime.parameters("codemode");
     this.codeSchema = isRecord(parameters) && isRecord(parameters.properties) &&
       isRecord(parameters.properties.code) && parameters.properties.code.type === "string";
   }
-  clearOutput(): void { this.displayOutput = undefined; }
+  clearPresentation(): void { this.displayOutput = undefined; this.historyRequests = undefined; }
   changed(): void {
-    if (this.displayOutput?.source !== this.facts.output) this.clearOutput();
+    if (this.displayOutput?.source !== this.facts.output) this.displayOutput = undefined;
+    if (this.historyRequests?.source !== this.parent.result) this.historyRequests = undefined;
     this.onChange();
   }
   replaceFacts(facts: CodemodeFacts): void {
     if (this.facts === facts) return;
 
-    this.clearOutput(); this.facts.dispose(); this.runtime.prune(this.facts);
+    this.clearPresentation(); this.facts.dispose(); this.runtime.prune(this.facts);
 
     this.facts = facts; this.changed();
   }
@@ -289,6 +370,31 @@ export class CodemodeParent {
   source(): Component | undefined {
     const value: unknown = Reflect.get(this.parent, "callRendererComponent");
     return renderable(value) ? value : undefined;
+  }
+  summarySource(record: ActivityRecord): ActivitySummarySource {
+    if (this.facts.records?.[record.ordinal] !== record) return {kind: "preview", request: undefined};
+    const source: unknown = this.parent.result;
+    const preview = () => argumentPreview(record.preview);
+    if (!isRecord(source) || source.role !== "toolResult") return {kind: "preview", request: preview()};
+    if (source.toolCallId !== this.parent.toolCallId || source.toolName !== this.parent.toolName || !this.facts.final) {
+      return {kind: "history", request: undefined, parameters: undefined};
+    }
+    if (this.historyRequests?.source !== source) {
+      const calls = new Map<string, StoredRequest | undefined>();
+      const nested = isRecord(source.nestedCalls) ? source.nestedCalls.calls : undefined;
+      if (Array.isArray(nested)) for (const call of nested) {
+        if (!isRecord(call) || typeof call.id !== "string" || typeof call.name !== "string") continue;
+        if (calls.has(call.id)) { calls.set(call.id, undefined); continue; }
+        calls.set(call.id, {name: call.name, request: recordedRequest(call.arguments), supplied: Object.hasOwn(call, "arguments")});
+      }
+      this.historyRequests = {source, calls, parameters: this.runtime.historicalParameters(this.parent, source)};
+    }
+    const stored = record.id && record.id !== `${this.parent.toolCallId}/?` ? this.historyRequests.calls.get(record.id) : undefined;
+    const parameters = this.historyRequests.parameters.get(record.name);
+    if (record.id && this.historyRequests.calls.has(record.id) && !stored) return {kind: "history", request: undefined, parameters};
+    if (stored && stored.name !== record.name) return {kind: "history", request: undefined, parameters};
+    if (stored?.name === record.name && stored.supplied) return {kind: "history", request: stored.request, parameters};
+    return {kind: "history", request: preview(), parameters};
   }
   supported(): boolean {
     return Boolean(this.runtime.mode() && this.codeSchema && isRecord(this.parent.args) && typeof this.parent.args.code === "string" && this.source());

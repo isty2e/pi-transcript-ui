@@ -70,6 +70,8 @@ Codemode's actual parent and nested calls retain normal tool renderer dispatch, 
 
 Independent items preserve native padding and media handling, but JSON whitespace can change wrapping and height. Arbitrary overrides that duplicate or combine parent call/result content, rewrite completed result payloads in place, or patch native component internals are not covered by a blanket compatibility claim. Ordinary nested tool bodies retain both native slots, including call-slot diffs and images managed outside a text result renderer.
 
+Recorded Codemode request summaries can use retained arguments or complete values from a native truncated preview without restoring a child body. Requested ranges and content sizes are labelled as requested, not measured output. Historical custom declarations come from the parent occurrence's branch prefix; a later registry or compaction checkpoint does not replace that source. Missing/conflicting declarations can limit interpretation. These display-only summaries do not add an execution journal, rerun tools, read referenced files or change renderer dispatch.
+
 Summaries do not replace tool execution or permissions. Command previews and line counts are not a security review, an execution trace or a complete filesystem diff.
 
 ## Intent prompt composition

@@ -39,33 +39,46 @@ export function fileMutationFor(parameters: unknown): FileMutation | undefined {
   } catch { return undefined; }
 }
 
-const writtenCounts = new WeakMap<object, { content: string; lines: number }>();
+const contentCounts = new WeakMap<object, { content: string; lines: number }>();
 
 /** Successful compatible writers report full content size, never a patch delta or receipt size. */
 export function writtenLineCount(capability: FileMutation | undefined, args: unknown, result: unknown, isPartial: boolean): number | undefined {
   try {
-    if (capability?.shape !== "content" || isPartial || !isRecord(result) || !Array.isArray(result.content) || (result.isError !== undefined && result.isError !== false) ||
-      !isRecord(args) || !fileMutationPath(capability, args) || typeof args.content !== "string") return undefined;
+    if (isPartial || !isRecord(result) || !Array.isArray(result.content) || (result.isError !== undefined && result.isError !== false) ||
+      !capability || !fileMutationPath(capability, args)) return undefined;
+    return requestedWrittenLineCount(capability, args);
+  } catch { return undefined; }
+}
+
+export function requestedWrittenLineCount(capability: FileMutation | undefined, args: unknown): number | undefined {
+  try {
+    if (capability?.shape !== "content" || !isRecord(args) || typeof args.content !== "string") return undefined;
     const content = args.content;
-    const cached = writtenCounts.get(args);
+    const cached = contentCounts.get(args);
     if (cached?.content === content) return cached.lines;
 
     let lines = content.length ? 1 : 0;
     for (let at = content.indexOf("\n"); at !== -1; at = content.indexOf("\n", at + 1)) lines++;
     if (content.endsWith("\n")) lines--;
 
-    writtenCounts.set(args, { content, lines });
+    contentCounts.set(args, { content, lines });
     return lines;
   } catch { return undefined; }
 }
 
+export function fileMutationTarget(capability: FileMutation, args: unknown): string | undefined {
+  return isRecord(args) && Object.hasOwn(args, capability.pathKey) && typeof args[capability.pathKey] === "string"
+    ? args[capability.pathKey] as string : undefined;
+}
+
 export function fileMutationPath(capability: FileMutation, args: unknown): string | undefined {
   try {
-    if (!isRecord(args) || typeof args[capability.pathKey] !== "string") return undefined;
+    const path = fileMutationTarget(capability, args);
+    if (!isRecord(args) || path === undefined) return undefined;
     const replacement = (value: unknown): boolean => capability.action === "Edit" && isRecord(value) && typeof value[capability.oldKey] === "string" && typeof value[capability.newKey] === "string";
     const valid = capability.shape === "content" ? typeof args.content === "string"
       : capability.shape === "replacement" ? replacement(args)
       : Array.isArray(args.edits) && args.edits.length <= 4096 && args.edits.every(replacement);
-    return valid ? args[capability.pathKey] as string : undefined;
+    return valid ? path : undefined;
   } catch { return undefined; }
 }

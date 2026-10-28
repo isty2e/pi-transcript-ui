@@ -3,7 +3,8 @@ import { isAbsolute, normalize, resolve } from "node:path";
 import { isRecord } from "./intent.js";
 import { Spacer, stripTerminalSequences, truncateToWidth, type Component } from "@earendil-works/pi-tui";
 import { classifyTool, type ToolGroupingRules, type ToolClassification } from "./classify.js";
-import { changeText, failureText, countResultLines, codemodeLine, shellSessionLine, displayFor, runningLine, settledLine, recordedActivityLine, DEFAULT_DISPLAY_LIMITS, type DisplayLimits, type LineParts, type CommandSpan } from "./display.js";
+import { changeText, failureText, countResultLines, codemodeLine, displayFor, DEFAULT_DISPLAY_LIMITS, type DisplayLimits, type LineParts, type CommandSpan } from "./display.js";
+import { interpretToolSummary, toolSummaryLine } from "./tool-summary.js";
 import { intentFromArgs } from "./intent.js";
 import type { DisclosureTarget } from "./navigation.js";
 import { fileReadFor } from "./read-body.js";
@@ -91,14 +92,14 @@ function transparentAssistant(component: Component): boolean {
   return isAssistant(component) && !component.isStreaming && component.hasToolCalls &&
     component.children.length === 1 && component.children[0] === component.contentContainer && component.contentContainer.children.length === 0;
 }
-function readPathKey(tool: Pick<NativeToolComponent, "args" | "cwd">): string | undefined {
+function readPathKey(tool: Pick<NativeToolComponent, "args" | "cwd">, requireBase = false): string | undefined {
   if (!isRecord(tool.args) || typeof tool.args.path !== "string" || !tool.args.path || tool.args.path.includes("\0")) return undefined;
   let path = tool.args.path.replace(/[\u00a0\u2000-\u200a\u202f\u205f\u3000]/g, " ").replace(/^@/, "");
   if (!path || path.startsWith("file:") || (process.platform === "win32" && path.startsWith("/"))) return undefined;
   if (path === "~" || path.startsWith("~/")) path = homedir() + path.slice(1);
   if (isAbsolute(path)) return JSON.stringify(["absolute", normalize(path)]);
   return typeof tool.cwd === "string" && isAbsolute(tool.cwd)
-    ? JSON.stringify(["absolute", resolve(tool.cwd, path)]) : JSON.stringify(["relative", normalize(path)]);
+    ? JSON.stringify(["absolute", resolve(tool.cwd, path)]) : requireBase ? undefined : JSON.stringify(["relative", normalize(path)]);
 }
 
 export function styleLine(theme: RowTheme, parts: LineParts, error = false,
@@ -432,18 +433,12 @@ function decorateTool(tool: NativeToolComponent, initialGroup: ToolGroup | null,
     if (!cachedSummary) {
       const layout = { limits, ...(contentWidth === undefined ? {} : { width: contentWidth }) };
       const display = displayFor(tool.toolName, tool.args, capability, capabilities.read, capabilities.patch);
-      const shellSession = shellSessionFor(tool, capabilities, phase, parameters);
       const code = itemProjection ? itemProjection.summary(phase) : display === null ? codemodeSummary({ toolName: tool.toolName, args: tool.args,
         result: tool.result, phase }) : undefined;
       const context = { intent, layout, durationMs };
-      const parts = shellSession ? shellSessionLine(shellSession, isError, phase, context)
-        : code ? codemodeLine({ summary: code, isError, ...context })
-        : phase === "settled"
-        ? settledLine({ toolName: tool.toolName, display, content: tool.result?.content,
-          isError, ...context,
-          metrics: summaryMetrics({ toolName: tool.toolName, args: tool.args, result: tool.result,
-            isPartial: false, classification, capabilities }) })
-        : runningLine(tool.toolName, display, intent, layout, phase);
+      const parts = code ? codemodeLine({ summary: code, isError, ...context })
+        : toolSummaryLine(interpretToolSummary({toolName: tool.toolName, request: {args: tool.args, complete: true, source: "live"},
+          result: tool.result, lifecycle: {kind: "native", phase}, parameters, classification, capabilities}), context);
       cachedSummary = { revision, width: contentWidth, intent, phase, sourceRevision, items, limits: limitsKey, home, parts, isError, command, durationMs };
       if (cacheable) { summaries.unshift(cachedSummary); summaries.length = Math.min(summaries.length, 2); }
       else summaries = [];
@@ -614,33 +609,32 @@ export function attachTranscriptPresentation(root: unknown, options: Presentatio
   const toolkit: ItemToolkit = {
     row: read => createSummaryRow(read, options.getTheme, options.displayLimits?.rowMaxWidth),
     requestRender: options.requestRender,
-    describe(record, matched, parent) {
+    describe(record, matched, source, parent) {
       const input = matched ? options.codemode?.runtime.input(matched) : undefined;
-      if (!childParameters.has(record.name)) childParameters.set(record.name, options.resolveParameters?.(record.name));
-      const schema = childParameters.get(record.name);
+      if (source?.kind !== "history" && !childParameters.has(record.name)) childParameters.set(record.name, options.resolveParameters?.(record.name));
+      const schema = source?.kind === "history" ? source.parameters : childParameters.get(record.name);
+      const request = input ? {args: input.args, complete: true, source: "live" as const} : source?.request;
+      const args = request?.args, result = input?.result;
       const mutation = fileMutationFor(schema), read = fileReadFor(schema);
       const patchParser = !mutation && !read ? createPatchRequestParser(schema) : undefined;
-      const patch = patchParser?.(input?.args);
+      const patch = patchParser?.(args);
       const caps: FileCapabilities = { mutation, read, patch };
       const classification = classifyTool(record.name, options.rules, mutation ?? patch);
-      const phase: ToolPhase = input || record.status !== "running" ? "settled" : "running";
-      const args = input?.args, result = input?.result;
-      const isError = input ? input.result.isError : record.status === "error";
-      const metrics = summaryMetrics({ toolName: record.name, args, result, isPartial: phase !== "settled", classification, capabilities: caps });
-      const member: GroupMemberSummary = { toolName: record.name, classification, capabilities: caps, phase, isError, metrics,
-        readPath: input ? readPathKey({ args, ...(parent.cwd === undefined ? {} : { cwd: parent.cwd }) }) : undefined,
+      const summary = interpretToolSummary({toolName: record.name, request, result, parameters: schema, classification, capabilities: caps,
+        lifecycle: {kind: "activity", status: record.status, parentFinal: parent.final}, preview: record.preview,
+        declaredAction: mutation?.action ?? (read ? "Read" : patchParser ? "Patch" : undefined)});
+      const member: GroupMemberSummary = { toolName: record.name, classification, capabilities: caps, phase: summary.phase,
+        isError: summary.status === "error", completion: summary.status === "unknown" || summary.status === "cancelled" ? summary.status : undefined,
+        metrics: summary.metrics,
+        readPath: summary.display?.action === "Read" && summary.display.target.kind === "path"
+          ? readPathKey({ args, ...(parent.cwd === undefined ? {} : { cwd: parent.cwd }) }, true) : undefined,
         outputLines: Array.isArray(result?.content) ? countResultLines(result.content) : undefined,
-        shellSession: input ? shellSessionSummary({ toolName: record.name, parameters: schema, args, result, isPartial: false }) !== undefined : false };
+        shellSession: summary.shell !== undefined };
       return { classification, member, line(width) {
         const layout = { limits: options.displayLimits ?? DEFAULT_DISPLAY_LIMITS, ...(width === undefined ? {} : { width }) };
-        if (!input) return recordedActivityLine(record.name, record.preview, record.status, layout, record.durationMs,
-          mutation?.action ?? (read ? "Read" : patchParser ? "Patch" : undefined));
-        const intent = options.resolveIntent ? options.resolveIntent(input.id, args) : intentFromArgs(args);
+        const intent = input && options.resolveIntent ? options.resolveIntent(input.id, args) : intentFromArgs(args);
         const context = { intent, layout, durationMs: result?.durationMs ?? record.durationMs };
-        const shell = shellSessionSummary({ toolName: record.name, parameters: schema, args, result, isPartial: false });
-        if (shell) return shellSessionLine(shell, isError, "settled", context);
-        return settledLine({ toolName: record.name, display: displayFor(record.name, args, mutation, read, patch),
-          content: result?.content, isError, metrics, ...context });
+        return toolSummaryLine(summary, context);
       } };
     },
     group(id, classification, members, parent, indent) {
