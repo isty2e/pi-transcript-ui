@@ -1,6 +1,6 @@
 import * as Pi from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext, ToolRenderers } from "@earendil-works/pi-coding-agent";
-import { Text, type Component } from "@earendil-works/pi-tui";
+import { Text, type Box, type Component } from "@earendil-works/pi-tui";
 import { isRecord } from "../intent.js";
 import type { DisplayLimits } from "../display.js";
 import type { NativeToolComponent } from "../wiring.js";
@@ -10,6 +10,7 @@ import type { SummaryRequest } from "../tool-summary.js";
 import { CodemodeOutputObserver } from "./output-observer.js";
 import { formattedOutput } from "./output-format.js";
 import { outputPartContent, type OutputBlock, type OutputPart, type OutputWitness } from "./output.js";
+import { inlineNativeToolBody } from "./native-body.js";
 
 export interface Appearance { showImages: boolean; imageWidthCells: number; outputPad: number }
 interface Host extends NativeToolComponent {
@@ -480,6 +481,12 @@ export class CodemodeParent {
     const usable = () => alive && !suspended && owned();
     const host = new Constructor(tool?.name ?? outputName, tool?.id ?? this.parent.toolCallId, tool?.args ?? {},
       this.runtime.appearance(), definition, { requestRender: () => { if (usable()) invalidate(); } }, this.parent.cwd);
+    if (!tool) {
+      const box = host.children[1] as (Component & Partial<Pick<Box, "setBgFn">>) | undefined;
+      if (typeof box?.setBgFn !== "function") throw new Error("Native output frame unavailable");
+      const updateDisplay = host.updateDisplay.bind(host), clearBackground = box.setBgFn.bind(box);
+      host.updateDisplay = () => { updateDisplay(); clearBackground(); };
+    }
     const nativeInvalidate = host.invalidate.bind(host), nativeExpanded = host.setExpanded.bind(host);
     host.invalidate = () => { if (usable()) { nativeInvalidate(); invalidate(); } };
     const output = "request" in input ? undefined : this.facts.output;
@@ -493,10 +500,14 @@ export class CodemodeParent {
       isError: this.facts.outcome?.isError === true }, false);
     nativeExpanded(expanded);
     host.setExpanded = value => { if (usable()) setExpanded(value); };
+    const body = inlineNativeToolBody(host, {
+      get children() { return host.children; }, render: width => host.render(width),
+      handleMouse: event => host.handleMouse?.(event), invalidate: () => host.invalidate(),
+    });
     return {
-      get children() { return usable() ? host.children : []; }, render: width => usable() ? host.render(width) : [],
-      handleMouse: event => usable() ? host.handleMouse?.(event) : { handled: true },
-      invalidate: () => host.invalidate(), setExpanded: value => { if (usable()) nativeExpanded(value); },
+      get children() { return usable() ? body.children : []; }, render: width => usable() ? body.render(width) : [],
+      handleMouse: event => usable() ? body.handleMouse?.(event) : { handled: true },
+      invalidate: () => body.invalidate(), setExpanded: value => { if (usable()) nativeExpanded(value); },
       appearance(value) { if (!usable()) return;
         if (Reflect.get(host, "showImages") !== value.showImages) host.setShowImages(value.showImages);
         if (Reflect.get(host, "imageWidthCells") !== value.imageWidthCells) host.setImageWidthCells(value.imageWidthCells);

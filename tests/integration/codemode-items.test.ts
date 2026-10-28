@@ -161,6 +161,56 @@ const assistantCall = (id: string): Extract<Parameters<SessionManager["appendMes
     cost: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0}},
 });
 
+describe("inline native body framing", () => {
+  it("retains the complete native card spacing in Codemode Original mode", () => {
+    const h = fixture({expanded: true, layout: "native"});
+    h.parent.updateResult(result([], "OUTPUT"), false);
+    const lines = h.render().split("\n").map(line => line.trimEnd());
+    const source = lines.indexOf("SOURCE CONTROL");
+    expect(source).toBeGreaterThan(0); expect(lines[source - 1]).toBe("");
+    expect(lines).toContain("ORIGINAL-AGGREGATE");
+  });
+
+  it("omits only the host separator below an expanded nested summary", () => {
+    const h = fixture({expanded: true, child: {renderShell: "self",
+      renderCall: () => new Text("NATIVE CALL", 0, 0), renderResult: () => new Text("NATIVE RESULT", 0, 0)}});
+    h.start(); h.nestedStart("p/1"); h.nestedEnd("p/1");
+    h.parent.updateResult(result([call("p/1")]), false);
+    const lines = h.render().split("\n").map(line => line.trimEnd());
+    const summary = lines.findIndex(line => line.includes("▾ Read /tmp/file.ts"));
+    expect(summary).toBeGreaterThanOrEqual(0);
+    expect(lines[summary + 1]).toBe("NATIVE CALL");
+    expect(lines).toContain("NATIVE RESULT");
+  });
+
+  it("leaves ordinary actual-tool body rendering unchanged", () => {
+    const h = fixture();
+    const ordinary = h.tool("read", "ordinary", {path: "/tmp/file.ts"});
+    ordinary.updateResult({content: [{type: "text", text: "BODY"}], isError: false}); ordinary.setExpanded(true);
+    const expected = ordinary.render(100);
+    h.chat.addChild(ordinary); h.render();
+    expect(ordinary.render(100).slice(2)).toEqual(expected);
+  });
+
+  it.each([false, true])("leaves owned Script output unfilled without removing actual tool backgrounds (error: %s)", isError => {
+    const h = fixture({expanded: true});
+    h.parent.updateResult({...result([], '{"value":1}'), isError}, false);
+    h.render();
+    const output = h.targets().find(target => target.label.includes("Script output"))!;
+    const body = (output as unknown as {children: Component[]}).children[1]!;
+    expect(body.render(100).some(line => /\x1b\[48[;:]/.test(line))).toBe(false);
+    expect(h.render()).toContain('"value": 1');
+    h.padding(3); h.showImages(false); h.render(); body.invalidate(); h.render();
+    const refreshed = body.render(100);
+    expect(refreshed.some(line => /\x1b\[48[;:]/.test(line))).toBe(false);
+    expect(refreshed.map(stripTerminalSequences).find(line => line.includes('"value"'))?.startsWith("     ")).toBe(true);
+
+    const actual = h.tool("plain", "actual", {});
+    actual.updateResult({content: [{type: "text", text: "ACTUAL BODY"}], isError}); actual.setExpanded(true);
+    expect(actual.render(100).some(line => /\x1b\[48[;:]/.test(line))).toBe(true);
+  });
+});
+
 describe("current Codemode parent revisions", () => {
   it("withdraws removed bodies, capabilities and stale controls before another paint", () => {
     let invalidate: (() => void) | undefined;
@@ -573,12 +623,12 @@ describe("independent native codemode items", () => {
     const output = h.targets().find(target => target.label.includes("Script output"))!;
     const members = h.targets().filter(target => target.parent === output);
     expect(members).toHaveLength(2);
-    const bodies = () => members.map(member => (member as unknown as {children: Component[]}).children[1]!.render(100));
+    const bodies = () => members.map(member => (member as unknown as {children: Component[]}).children[1]!.render(100).map(stripTerminalSequences));
     const native = (value: string, pad: number) => {
       const host = new ToolExecutionComponent("unused", "unused", {}, {outputPad: pad, showImages: false},
         {renderCall: () => new Text("", 0, 0)}, {requestRender: h.requests} as never, "/tmp");
       host.updateResult({content: [{type: "text", text: value}], isError: false}); host.setExpanded(true);
-      return host.render(100);
+      return host.render(100).slice(1).map(stripTerminalSequences);
     };
     expect(bodies()).toEqual([native("A", 2), native("B", 2)]);
     const scope = h.chat.children[0] as Component & {setExpanded(value: boolean): void};
