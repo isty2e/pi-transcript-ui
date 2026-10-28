@@ -632,7 +632,8 @@ export function attachTranscriptPresentation(root: unknown, options: Presentatio
         shellSession: summary.shell !== undefined };
       return { classification, member, line(width) {
         const layout = { limits: options.displayLimits ?? DEFAULT_DISPLAY_LIMITS, ...(width === undefined ? {} : { width }) };
-        const intent = input && options.resolveIntent ? options.resolveIntent(input.id, args) : intentFromArgs(args);
+        const id = input?.id ?? record.id;
+        const intent = options.resolveIntent ? id ? options.resolveIntent(id, args) : undefined : intentFromArgs(args);
         const context = { intent, layout, durationMs: result?.durationMs ?? record.durationMs };
         return toolSummaryLine(summary, context);
       } };

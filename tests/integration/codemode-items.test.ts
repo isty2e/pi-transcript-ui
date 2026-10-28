@@ -21,7 +21,7 @@ const result = (calls: unknown[], text?: string) => ({ content: [header, ...(tex
 
 function fixture(options: { expanded?: boolean; containerExpanded?: boolean; colored?: boolean; oldId?: string; child?: ToolRenderers; accessorChildren?: boolean; codemodeRegistered?: boolean;
   layout?: DisplayLimits["codemode"]; groupCodemode?: boolean; nativeCode?: boolean; output?: ToolRenderers; noOutputResolver?: boolean;
-  renderer?: ToolRendererResolver; history?: SessionManager } = {}) {
+  renderer?: ToolRendererResolver; history?: SessionManager; resolveIntent?: (id: string, args: unknown) => string | undefined } = {}) {
   const handlers = new Map<string, ((event: Record<string, unknown>) => void)[]>();
   const root = new Container(), chat = new Container(); root.addChild(chat);
   const accessorChildren = (container: Container) => {
@@ -95,6 +95,7 @@ function fixture(options: { expanded?: boolean; containerExpanded?: boolean; col
     getTheme: () => options.colored ? theme : ({ bold: (s: string) => s, fg: (_kind, s: string) => s }), requestRender: requests,
     displayLimits: { ...defaultSettings().display, codemode: layout }, codemode: presentation,
     ...(options.groupCodemode ? { rules: { codemode: "read" as const } } : {}),
+    ...(options.resolveIntent ? {resolveIntent: options.resolveIntent} : {}),
     resolveParameters: name => definitions.get(name)?.parameters,
   });
   let detach = attach();
@@ -148,6 +149,31 @@ const assistantCall = (id: string): Extract<Parameters<SessionManager["appendMes
 });
 
 describe("retained Codemode request summaries", () => {
+  it.each(["retained", "preview"])("honors the existing intent policy without a live child body: %s", source => {
+    const h = fixture({layout: "flat", resolveIntent: () => undefined});
+    const args = {path: "/intent.ts", displaySummary: "HIDDEN_REQUEST_PURPOSE"};
+    const records = [{...call("p/1"), args: JSON.stringify(args)}];
+    const message = source === "retained" ? savedParent(records, {
+      complete: true, calls: [{id: "p/1", name: "read", arguments: args, status: "ok"}],
+    }) : result(records);
+    h.parent.updateResult(message, false); h.render();
+    const label = h.targets().find(target => target.label.includes("Read /intent.ts"))!.label;
+    expect(label).not.toContain("HIDDEN_REQUEST_PURPOSE");
+  });
+
+  it.each(["retained", "preview"])("resolves the individual child intent instead of requiring a body or copying a request field: %s", source => {
+    const resolveIntent = vi.fn((id: string) => id === "p/1" ? "RESTORED_CHILD_PURPOSE" : undefined);
+    const h = fixture({layout: "flat", resolveIntent});
+    const args = {path: "/intent.ts", displaySummary: "REQUEST_FIELD_PURPOSE"};
+    const records = [{...call("p/1"), args: JSON.stringify(args)}];
+    const message = source === "retained" ? savedParent(records, {
+      complete: true, calls: [{id: "p/1", name: "read", arguments: args, status: "ok"}],
+    }) : result(records);
+    h.parent.updateResult(message, false); h.render();
+    const label = h.targets().find(target => target.label.includes("Read /intent.ts"))!.label;
+    expect(label).toContain("RESTORED_CHILD_PURPOSE"); expect(label).not.toContain("REQUEST_FIELD_PURPOSE");
+  });
+
   it("uses independently retained requests even for an incomplete inventory, without inventing bodies or measured totals", () => {
     const h = fixture({expanded: true, layout: "flat"});
     const message = savedParent([{...call("p/1"), args: '{"path":"/preview.ts","limit":1}'}], {
