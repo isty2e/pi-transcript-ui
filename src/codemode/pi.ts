@@ -105,6 +105,7 @@ export class CodemodeRuntime {
   private indexed = false;
   private readonly executions = new Map<string, Execution>();
   private readonly bindings = new Map<NativeToolComponent, CodemodeParent>();
+  private readonly dirtyParents = new Set<string>();
   private readonly payloads = new Map<EvidenceHandle, { owner: CodemodeFacts; payload: Payload }>();
   private outputs = new WeakMap<CodemodeFacts, {execution: Execution; witness: OutputWitness}>();
   private outputObserver: CodemodeOutputObserver | undefined;
@@ -132,7 +133,7 @@ export class CodemodeRuntime {
         eligible: this.indexed && !this.completed.has(event.toolCallId) && !prior };
       this.executions.set(event.toolCallId, execution);
       const [binding] = this.resolveParentBindings(event.toolCallId);
-      binding?.replaceFacts(execution.facts);
+      binding?.replaceFacts(execution.facts, execution.eligible);
     });
     pi.on("tool_execution_end", event => {
       if (!this.active) return;
@@ -154,6 +155,47 @@ export class CodemodeRuntime {
         if (![...this.bindings.values()].some(binding => binding.facts === execution.facts)) { execution.facts.dispose(); this.prune(execution.facts); }
       }
     });
+    pi.on("message_end", event => {
+      const message = event.message;
+      if (this.active && message.role === "toolResult" && message.toolName === "codemode" &&
+        [...this.bindings.values()].some(binding => binding.parent.toolCallId === message.toolCallId)) this.dirtyParents.add(message.toolCallId);
+    });
+    pi.on("turn_end", () => this.reconcile());
+    pi.on("agent_end", () => this.reconcile());
+    pi.on("session_tree", () => this.reconcile(true));
+    pi.on("session_compact", () => this.reconcile(true));
+  }
+
+  private reconcile(reobserve = false): void {
+    if (!this.active || !this.context || this.bindings.size === 0) return;
+    let branch: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>;
+    try { branch = this.context.sessionManager.getBranch(); } catch { return; }
+    if (reobserve) this.history = undefined;
+    const calls = new Map<string, {name: string; position: number} | undefined>();
+    const results = new Map<string, {id: string; position: number; message: unknown} | undefined>();
+    for (const [position, entry] of branch.entries()) {
+      if (entry.type !== "message") continue;
+      const message = entry.message;
+      if (message.role === "assistant") for (const block of message.content) {
+        if (block.type !== "toolCall") continue;
+        calls.set(block.id, calls.has(block.id) ? undefined : {name: block.name, position});
+      }
+      if (message.role === "toolResult") results.set(message.toolCallId, results.has(message.toolCallId)
+        ? undefined : {id: entry.id, position, message});
+    }
+    const parents = new Map<string, CodemodeParent[]>();
+    for (const binding of this.bindings.values()) {
+      const id = binding.parent.toolCallId;
+      const group = parents.get(id) ?? [];
+      group.push(binding); parents.set(id, group);
+    }
+    for (const [id, group] of parents) {
+      const call = calls.get(id), result = results.get(id);
+      const source = group.length === 1 && call?.name === "codemode" && result && call.position < result.position &&
+        isRecord(result.message) && result.message.toolName === "codemode" ? result : undefined;
+      for (const binding of group) binding.reconcile(source, reobserve || this.dirtyParents.has(id));
+    }
+    this.dirtyParents.clear();
   }
 
   start(context: ExtensionContext): void {
@@ -216,7 +258,7 @@ export class CodemodeRuntime {
       const manager = this.mode()?.sessionManager;
       if (!manager || typeof Pi.buildSessionProjection !== "function") return new Map();
       const leaf = manager.getLeafId(), session = manager.getSessionId();
-      if (this.history?.manager !== manager || this.history.leaf !== leaf || this.history.session !== session) {
+      if (this.history?.manager !== manager || this.history.leaf !== leaf || this.history.session !== session || !this.history.sources.has(source)) {
         const branch = manager.getBranch(), sources = new WeakMap<object, HistoricalDeclaration>();
         let parameters = new Map<string, unknown>(), dirty = true, conflicts = new Set<string>();
         let calls = new Map<string, {name: string; parameters: ReadonlyMap<string, unknown>; result?: object} | undefined>();
@@ -282,7 +324,7 @@ export class CodemodeRuntime {
 
       if (parent.isPartial) {
         const [candidate] = this.resolveParentBindings(parent.toolCallId);
-        if (execution && candidate === binding) binding.replaceFacts(execution.facts);
+        if (execution && candidate === binding) binding.replaceFacts(execution.facts, execution.eligible);
       }
       binding.observe();
     }
@@ -306,7 +348,9 @@ export class CodemodeRuntime {
     if (execution?.facts === facts) execution.admitted = true;
   }
   input(matched: MatchedTerminal): CompletedInput | undefined {
-    const request = this.payloads.get(matched.request)?.payload, end = this.payloads.get(matched.terminal)?.payload;
+    const requestValue = this.payloads.get(matched.request), endValue = this.payloads.get(matched.terminal);
+    if (!requestValue || requestValue.owner !== endValue?.owner || !requestValue.owner.owns(matched)) return undefined;
+    const request = requestValue.payload, end = endValue.payload;
     if (request?.kind !== "request" || end?.kind !== "terminal" || !isRecord(end.result)) return undefined;
     return { name: matched.name, id: matched.id, args: request.args,
       result: { ...end.result, isError: end.isError, durationMs: end.durationMs } };
@@ -333,7 +377,7 @@ export class CodemodeRuntime {
     this.active = false;
     this.outputObserver?.dispose(); this.outputObserver = undefined; this.outputs = new WeakMap(); this.history = undefined;
     for (const binding of this.bindings.values()) { binding.clearPresentation(); binding.facts.dispose(); }
-    this.bindings.clear(); this.executions.clear(); this.payloads.clear(); this.completed.clear();
+    this.bindings.clear(); this.executions.clear(); this.payloads.clear(); this.completed.clear(); this.dirtyParents.clear();
     this.context = undefined; this.root = undefined; this.indexed = false;
   }
   shutdown(): void { this.stop(); this.releaseLookup(); this.captured = undefined; }
@@ -344,28 +388,47 @@ export class CodemodeParent {
   private readonly codeSchema: boolean;
   private displayOutput: {source: ScriptOutput; content: ReturnType<typeof formattedOutput>} | undefined;
   private historyRequests: HistoryRequests | undefined;
+  private observedSource: unknown;
+  private sourceEntry: string | undefined;
+  private liveOwner = false;
   constructor(readonly runtime: CodemodeRuntime, readonly parent: NativeToolComponent, public facts: CodemodeFacts) {
     const parameters = runtime.parameters("codemode");
     this.codeSchema = isRecord(parameters) && isRecord(parameters.properties) &&
       isRecord(parameters.properties.code) && parameters.properties.code.type === "string";
   }
-  clearPresentation(): void { this.displayOutput = undefined; this.historyRequests = undefined; }
+  clearPresentation(): void { this.displayOutput = undefined; this.historyRequests = undefined; this.observedSource = undefined; this.sourceEntry = undefined; }
   changed(): void {
     if (this.displayOutput?.source !== this.facts.output) this.displayOutput = undefined;
-    if (this.historyRequests?.source !== this.parent.result) this.historyRequests = undefined;
+    if (this.historyRequests?.source !== this.observedSource) this.historyRequests = undefined;
     this.onChange();
   }
-  replaceFacts(facts: CodemodeFacts): void {
+  replaceFacts(facts: CodemodeFacts, liveOwner = false): void {
     if (this.facts === facts) return;
 
     this.clearPresentation(); this.facts.dispose(); this.runtime.prune(this.facts);
 
-    this.facts = facts; this.changed();
+    this.facts = facts; this.liveOwner = liveOwner; this.changed();
   }
   observe(): void {
+    if (!this.facts.final || !this.parent.isPartial) {
+      this.observedSource = this.parent.result; this.historyRequests = undefined;
+    }
     this.facts.observe(this.parent.result, this.parent.isPartial,
       this.parent.isPartial ? undefined : this.runtime.takeOutput(this.facts));
     this.runtime.prune(this.facts); this.changed();
+  }
+  reconcile(source: {id: string; message: unknown} | undefined, reobserve: boolean): void {
+    if (!source || (this.sourceEntry !== undefined && this.sourceEntry !== source.id)) {
+      if (this.sourceEntry !== undefined) {
+        this.clearPresentation(); this.facts.dispose(); this.runtime.prune(this.facts); this.changed();
+      }
+      return;
+    }
+    if (this.facts.faulted || (!this.sourceEntry && !this.liveOwner && this.observedSource !== source.message)) return;
+    if (this.sourceEntry === source.id && this.observedSource === source.message && !reobserve) return;
+    this.sourceEntry = source.id;
+    try { this.parent.updateResult(source.message, false); }
+    catch { this.facts.dispose(); this.runtime.prune(this.facts); this.changed(); }
   }
   source(): Component | undefined {
     const value: unknown = Reflect.get(this.parent, "callRendererComponent");
@@ -373,7 +436,7 @@ export class CodemodeParent {
   }
   summarySource(record: ActivityRecord): ActivitySummarySource {
     if (this.facts.records?.[record.ordinal] !== record) return {kind: "preview", request: undefined};
-    const source: unknown = this.parent.result;
+    const source: unknown = this.observedSource;
     const preview = () => argumentPreview(record.preview);
     if (!isRecord(source) || source.role !== "toolResult") return {kind: "preview", request: preview()};
     if (source.toolCallId !== this.parent.toolCallId || source.toolName !== this.parent.toolName || !this.facts.final) {
@@ -404,7 +467,9 @@ export class CodemodeParent {
     invalidate: () => void): CompletedBody {
     const mode = this.runtime.mode();
     if (!mode) throw new Error("Codemode host unavailable");
-    if ("request" in input ? !this.facts.owns(input) : !this.facts.ownsOutput(input))
+    const facts = this.facts;
+    const owned = () => this.facts === facts && ("request" in input ? facts.owns(input) : facts.ownsOutput(input));
+    if (!owned())
       throw new Error("Completed display evidence unavailable");
     const tool = "request" in input ? this.runtime.input(input) : undefined;
     if ("request" in input && !tool) throw new Error("Completed invocation unavailable");
@@ -412,10 +477,11 @@ export class CodemodeParent {
     const definition = tool ? mode.getRegisteredToolDefinition(tool.name) : { renderCall: () => new Text("", 0, 0) };
     const Constructor = this.parent.constructor as unknown as BodyConstructor;
     let alive = true, suspended = false;
+    const usable = () => alive && !suspended && owned();
     const host = new Constructor(tool?.name ?? outputName, tool?.id ?? this.parent.toolCallId, tool?.args ?? {},
-      this.runtime.appearance(), definition, { requestRender: () => { if (alive && !suspended) invalidate(); } }, this.parent.cwd);
+      this.runtime.appearance(), definition, { requestRender: () => { if (usable()) invalidate(); } }, this.parent.cwd);
     const nativeInvalidate = host.invalidate.bind(host), nativeExpanded = host.setExpanded.bind(host);
-    host.invalidate = () => { if (alive && !suspended) { nativeInvalidate(); invalidate(); } };
+    host.invalidate = () => { if (usable()) { nativeInvalidate(); invalidate(); } };
     const output = "request" in input ? undefined : this.facts.output;
     let content: readonly OutputBlock[] | undefined;
     if (output && !("request" in input)) {
@@ -426,12 +492,12 @@ export class CodemodeParent {
     host.updateResult(tool?.result ?? { content, details: output?.fullOutputPath === undefined ? {} : { fullOutputPath: output.fullOutputPath },
       isError: this.facts.outcome?.isError === true }, false);
     nativeExpanded(expanded);
-    host.setExpanded = value => { if (alive && !suspended) setExpanded(value); };
+    host.setExpanded = value => { if (usable()) setExpanded(value); };
     return {
-      get children() { return alive && !suspended ? host.children : []; }, render: width => alive && !suspended ? host.render(width) : [],
-      handleMouse: event => alive && !suspended ? host.handleMouse?.(event) : { handled: true },
-      invalidate: () => host.invalidate(), setExpanded: value => { if (alive && !suspended) nativeExpanded(value); },
-      appearance(value) { if (!alive || suspended) return;
+      get children() { return usable() ? host.children : []; }, render: width => usable() ? host.render(width) : [],
+      handleMouse: event => usable() ? host.handleMouse?.(event) : { handled: true },
+      invalidate: () => host.invalidate(), setExpanded: value => { if (usable()) nativeExpanded(value); },
+      appearance(value) { if (!usable()) return;
         if (Reflect.get(host, "showImages") !== value.showImages) host.setShowImages(value.showImages);
         if (Reflect.get(host, "imageWidthCells") !== value.imageWidthCells) host.setImageWidthCells(value.imageWidthCells);
         if (Reflect.get(host, "outputPad") !== value.outputPad) host.setOutputPad(value.outputPad);

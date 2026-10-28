@@ -157,7 +157,7 @@ function formattedPartition(content: readonly OutputBlock[]): readonly OutputPar
   return Object.freeze(parts);
 }
 
-export function scriptOutput(result: unknown, witness?: OutputWitness): ScriptOutput | undefined {
+export function scriptOutput(result: unknown, witness?: OutputWitness, previous?: ScriptOutput): ScriptOutput | undefined {
   if (!isRecord(result) || !Array.isArray(result.content)) return undefined;
   if (!result.content.every(block => isRecord(block) && typeof block.type === "string")) return undefined;
   let content = result.content as OutputBlock[];
@@ -173,6 +173,14 @@ export function scriptOutput(result: unknown, witness?: OutputWitness): ScriptOu
     const sealed = Object.freeze(snapshot.map(block => Object.freeze({...block})));
     const observed = framed && witness ? observedPartition(sealed, witness) : undefined;
     if (observed) return Object.freeze({content: sealed, fullOutputPath, parts: observed, partition: "observed"});
+    if (previous?.parts && previous.content.length === sealed.length && sealed.every((block, index) => {
+      const prior = previous.content[index]!;
+      const keys = Object.keys(block);
+      return keys.length === Object.keys(prior).length && keys.every(key => Object.hasOwn(prior, key) && Object.is(block[key], prior[key]));
+    })) {
+      return Object.freeze({content: sealed, fullOutputPath, partition: previous.partition,
+        parts: Object.freeze(previous.parts.map(part => Object.freeze({...part})))});
+    }
     const formatted = formattedPartition(sealed);
     if (formatted) return Object.freeze({content: sealed, fullOutputPath, parts: formatted, partition: "formatted"});
   }

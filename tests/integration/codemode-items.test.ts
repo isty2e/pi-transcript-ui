@@ -4,6 +4,8 @@ import { InteractiveMode, AssistantMessageComponent, ToolExecutionComponent, Ses
 import { Container, MouseRegion, Text, stripTerminalSequences, visibleWidth, getCapabilities, setCapabilities, type Component } from "@earendil-works/pi-tui";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { attachTranscriptPresentation, type NativeToolComponent } from "../../src/wiring.js";
 import { CodemodeRuntime } from "../../src/codemode/pi.js";
 import { CodemodePresentation } from "../../src/codemode/view.js";
@@ -21,7 +23,8 @@ const result = (calls: unknown[], text?: string) => ({ content: [header, ...(tex
 
 function fixture(options: { expanded?: boolean; containerExpanded?: boolean; colored?: boolean; oldId?: string; child?: ToolRenderers; accessorChildren?: boolean; codemodeRegistered?: boolean;
   layout?: DisplayLimits["codemode"]; groupCodemode?: boolean; nativeCode?: boolean; output?: ToolRenderers; noOutputResolver?: boolean;
-  renderer?: ToolRendererResolver; history?: SessionManager; resolveIntent?: (id: string, args: unknown) => string | undefined } = {}) {
+  renderer?: ToolRendererResolver; history?: SessionManager; resolveIntent?: (id: string, args: unknown) => string | undefined;
+  install?: (api: ExtensionAPI) => void; installFirst?: boolean; cwd?: string } = {}) {
   const handlers = new Map<string, ((event: Record<string, unknown>) => void)[]>();
   const root = new Container(), chat = new Container(); root.addChild(chat);
   const accessorChildren = (container: Container) => {
@@ -62,16 +65,27 @@ function fixture(options: { expanded?: boolean; containerExpanded?: boolean; col
   if (options.codemodeRegistered === false) definitions.delete("codemode");
   let layout: DisplayLimits["codemode"] = options.layout ?? "items", pad = 0, showImages = true;
   const sessionManager = options.history ?? { getEntries: () => options.oldId ? [{ type: "message", message: { role: "toolResult", toolCallId: options.oldId } }] : [] };
+  const context = {mode: "tui", hasUI: false, ui: {}, cwd: options.cwd ?? "/tmp", sessionManager} as unknown as ExtensionContext;
+  let installedRenderer: ToolRendererResolver | undefined;
   const api = {
-    on(type: string, handler: (event: Record<string, unknown>) => void) { const list = handlers.get(type) ?? []; list.push(handler); handlers.set(type, list); },
+    on(type: string, handler: (event: Record<string, unknown>, context: ExtensionContext) => void) {
+      const list = handlers.get(type) ?? [], receive = (event: Record<string, unknown>) => handler(event, context);
+      list.push(receive); handlers.set(type, list);
+      return () => { const index = list.indexOf(receive); if (index >= 0) list.splice(index, 1); };
+    },
     getAllTools: () => [...definitions.values()],
+    registerToolRenderer(renderer: ToolRendererResolver) { installedRenderer = renderer; }, registerCommand() {},
   } as unknown as ExtensionAPI;
+  if (options.installFirst) options.install?.(api);
   const runtime = new CodemodeRuntime(api, () => layout);
-  const context = { mode: "tui", sessionManager } as unknown as ExtensionContext;
+  if (!options.installFirst) options.install?.(api);
   runtime.start(context); runtime.setRoot(root);
+  const emit = (type: string, event: Record<string, unknown>) => { for (const handler of [...handlers.get(type) ?? []]) handler(event); };
+  if (options.install) emit("session_start", {});
   const genericResult = vi.fn((value: { content: { type: string; text?: string }[] }) => new Text(value.content.map(block => block.text ?? "").join("\n"), 0, 0));
   const resolveOutput = vi.fn((name: string, base: () => ToolRenderers | undefined) => {
     if (options.renderer) return options.renderer(name, base);
+    if (installedRenderer) return installedRenderer(name, base);
     const native = base();
     return name === "pi-transcript-ui:codemode-output" && !native ? options.output ?? { renderResult: genericResult } : native;
   });
@@ -103,7 +117,6 @@ function fixture(options: { expanded?: boolean; containerExpanded?: boolean; col
   accessorChildren(parent);
   // Most cases inspect children of an already opened container; item defaults remain native.
   parent.setExpanded(options.containerExpanded ?? true); chat.addChild(parent);
-  const emit = (type: string, event: Record<string, unknown>) => { for (const handler of handlers.get(type) ?? []) handler(event); };
   const start = () => emit("tool_execution_start", { toolCallId: "p", toolName: "codemode", args: { code: "USER-CODE" } });
   const nestedStart = (id: string, name = "read", args: unknown = { path: "/tmp/file.ts" }) =>
     emit("tool_execution_start", { toolCallId: id, parentToolCallId: "p", toolName: name, args });
@@ -111,7 +124,7 @@ function fixture(options: { expanded?: boolean; containerExpanded?: boolean; col
     toolCallId: id, parentToolCallId: "p", toolName: name, result: { content: [{ type: "text", text }] }, isError: false, durationMs: 3,
   });
   const render = () => chat.render(100).map(stripTerminalSequences).join("\n");
-  cleanups.push(() => { detach(); presentation.dispose(); runtime.shutdown(); });
+  cleanups.push(() => { emit("session_shutdown", {}); detach(); presentation.dispose(); runtime.shutdown(); });
   return { root, chat, parent, runtime, presentation, requests, emit, start, nestedStart, nestedEnd, render, mode, genericResult, resolveOutput, definitions,
     async run(code: string, beforeEnd?: () => void, beforeDisplay?: () => void) {
       if (!codeDefinition.execute) throw new Error("Native executor unavailable");
@@ -146,6 +159,161 @@ const assistantCall = (id: string): Extract<Parameters<SessionManager["appendMes
   api: "openai-responses", provider: "openai", model: "fixture", stopReason: "toolUse", timestamp: 0,
   usage: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
     cost: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0}},
+});
+
+describe("current Codemode parent revisions", () => {
+  it("withdraws removed bodies, capabilities and stale controls before another paint", () => {
+    let invalidate: (() => void) | undefined;
+    const h = fixture({expanded: true, child: {renderResult(_value, _options, _theme, ctx) {
+      invalidate = ctx.invalidate; return new Text("RETIRED-BODY", 0, 0);
+    }}});
+    h.start(); h.nestedStart("p/1"); h.nestedEnd("p/1");
+    h.parent.updateResult(result([call("p/1")], "OLD-OUTPUT"), false); expect(h.render()).toContain("RETIRED-BODY");
+    const binding = h.runtime.bind(h.parent as unknown as NativeToolComponent)!, facts = binding.facts;
+    const proof = facts.matched(facts.records![0]!)!, target = h.targets().find(target => target.label.includes("Read /tmp/file.ts"))!;
+    h.parent.updateResult(result([], "CURRENT-OUTPUT"), false);
+    const requests = h.requests.mock.calls.length;
+    invalidate!(); target.setExpanded(false);
+    expect(h.requests).toHaveBeenCalledTimes(requests); expect(h.runtime.input(proof)).toBeUndefined();
+    const visible = h.render();
+    expect(visible).toContain("CURRENT-OUTPUT"); expect(visible).not.toContain("RETIRED-BODY"); expect(visible).not.toContain("OLD-OUTPUT");
+    expect(h.targets().some(target => target.label.includes("Read /tmp/file.ts"))).toBe(false);
+    h.nestedStart("p/1"); h.nestedEnd("p/1", "read", "LATE-BODY");
+    h.parent.updateResult(result([call("p/1")]), false);
+    expect(h.render()).toContain("Detailed result unavailable"); expect(h.render()).not.toContain("LATE-BODY");
+  });
+
+  it("creates a lazy child body only from the surviving current receipt", () => {
+    const h = fixture(); h.start();
+    for (const [id, path] of [["p/1", "/first"], ["p/2", "/second"]]) {
+      h.nestedStart(id!, "read", {path}); h.nestedEnd(id!, "read", `BODY-${path}`);
+    }
+    h.parent.updateResult(result([call("p/1"), call("p/2")]), false); h.render();
+    h.parent.updateResult(result([call("p/2")]), false); h.render();
+    h.targets().find(target => target.label.includes("Read /second"))!.setExpanded(true);
+    const visible = h.render();
+    expect(visible).toContain("BODY-/second"); expect(visible).not.toContain("BODY-/first");
+    expect(h.targets().some(target => target.label.includes("/first"))).toBe(false);
+  });
+
+  it("preserves actual native callback pairs and row state when final activities reorder", () => {
+    const callRenderer = vi.fn((args: unknown, _theme: unknown, ctx: {state: Record<string, unknown>; toolCallId: string}) => {
+      ctx.state.marker ??= `STATE-${ctx.toolCallId}`;
+      return new Text(`${ctx.state.marker} ${JSON.stringify(args)}`, 0, 0);
+    });
+    const resultRenderer = vi.fn((_value: unknown, _options: unknown, _theme: unknown, ctx: {state: Record<string, unknown>}) =>
+      new Text(`RESULT-${ctx.state.marker}`, 0, 0));
+    const h = fixture({expanded: true, child: {renderCall: callRenderer, renderResult: resultRenderer}});
+    h.start();
+    for (const id of ["p/1", "p/2"]) { h.nestedStart(id); h.nestedEnd(id); }
+    h.parent.updateResult(result([call("p/1"), call("p/2")]), false); h.render();
+    const targets = h.targets().filter(target => target.label.includes("Read /tmp/file.ts"));
+    const counts = [callRenderer.mock.calls.length, resultRenderer.mock.calls.length];
+    const states = new Map(callRenderer.mock.calls.map(([, , ctx]) => [ctx.toolCallId, ctx.state]));
+    h.parent.updateResult(result([call("p/2"), call("p/1")]), false);
+    const visible = h.render();
+    expect(visible.indexOf("STATE-p/2")).toBeLessThan(visible.indexOf("STATE-p/1"));
+    expect(callRenderer.mock.calls.length).toBeGreaterThan(counts[0]!);
+    expect(resultRenderer.mock.calls.length).toBeGreaterThan(counts[1]!);
+    for (const [, , ctx] of callRenderer.mock.calls) expect(ctx.state).toBe(states.get(ctx.toolCallId));
+    expect(h.targets().filter(target => target.label.includes("Read /tmp/file.ts"))).toEqual([...targets].reverse());
+  });
+
+  it("releases old output rows across multi, single, absent and shorter multi output", () => {
+    const h = fixture({expanded: true});
+    const multi = (values: string[]) => values.map((value, index) => `==> text ${index + 1}/${values.length} <==\n${value}`).join("\n");
+    for (const [text, expected, absent] of [
+      [multi(["OLD-A", "OLD-B", "OLD-C"]), ["OLD-A", "OLD-B", "OLD-C"], []],
+      ["SINGLE", ["SINGLE"], ["OLD-A", "OLD-B", "OLD-C"]],
+      [undefined, [], ["SINGLE", "Script output"]],
+      [multi(["NEXT-A", "NEXT-B", "NEXT-C"]), ["NEXT-A", "NEXT-B", "NEXT-C"], ["SINGLE"]],
+      [multi(["FINAL-A", "FINAL-B"]), ["FINAL-A", "FINAL-B"], ["NEXT-A", "NEXT-B", "NEXT-C", "Output 3/3"]],
+    ] as const) {
+      h.parent.updateResult(result([], text), false);
+      const visible = h.render();
+      for (const value of expected) expect(visible).toContain(value);
+      for (const value of absent) expect(visible).not.toContain(value);
+    }
+  });
+
+  it("reconciles settled raw messages after append, including a same-leaf in-place replacement", () => {
+    const history = SessionManager.inMemory("/tmp"), renderer = vi.fn(() => new Text("CHILD-RESULT", 0, 0));
+    const h = fixture({expanded: true, history, child: {renderResult: renderer}});
+    history.appendMessage(assistantCall("p")); h.start(); h.nestedStart("p/1"); h.nestedEnd("p/1");
+    h.parent.updateResult(result([call("p/1")], "PROVISIONAL"), false); expect(h.render()).toContain("CHILD-RESULT");
+    h.emit("tool_execution_end", {toolCallId: "p", toolName: "codemode", result: result([call("p/1")]), isError: false});
+    const canonical = {...savedParent([call("p/1")], {complete: true, calls: []}), content: [header, {type: "text" as const, text: "SETTLED"}]};
+    h.emit("message_end", {message: canonical});
+    expect(h.render()).toContain("PROVISIONAL");
+    const entryId = history.appendMessage(canonical);
+    h.emit("turn_end", {});
+    expect(h.render()).toContain("SETTLED"); expect(h.render()).not.toContain("PROVISIONAL");
+    expect(h.render()).toContain("CHILD-RESULT");
+    const callbacks = renderer.mock.calls.length;
+    h.emit("agent_end", {}); h.render(); expect(renderer).toHaveBeenCalledTimes(callbacks);
+
+    const leaf = history.getLeafId();
+    canonical.details.calls = []; canonical.content = [header, {type: "text", text: "REDACTED"}];
+    h.emit("message_end", {message: canonical});
+    h.emit("agent_end", {});
+    expect(history.getLeafId()).toBe(leaf); expect(history.getEntry(entryId)?.type).toBe("message");
+    const visible = h.render();
+    expect(visible).toContain("REDACTED"); expect(visible).not.toContain("CHILD-RESULT"); expect(visible).not.toContain("SETTLED");
+  });
+
+  it.each(["session_tree", "session_compact"])("withdraws an associated owner when its raw parent becomes ambiguous at %s", event => {
+    const history = SessionManager.inMemory("/tmp"), h = fixture({expanded: true, history});
+    history.appendMessage(assistantCall("p")); h.start(); h.nestedStart("p/1"); h.nestedEnd("p/1");
+    h.parent.updateResult(result([call("p/1")]), false); h.render();
+    history.appendMessage(savedParent([call("p/1")], {complete: true, calls: []})); h.emit("turn_end", {}); h.render();
+    const facts = h.runtime.bind(h.parent as unknown as NativeToolComponent)!.facts, proof = facts.matched(facts.records![0]!)!;
+    history.appendMessage(assistantCall("p")); h.emit(event, {});
+    expect(h.runtime.input(proof)).toBeUndefined(); expect(h.render()).not.toContain("CHILD-RESULT");
+    h.parent.updateResult(result([call("p/1")]), false);
+    expect(h.render()).not.toContain("CHILD-RESULT");
+  });
+
+  it("does not associate an unrelated restored card by a matching bare parent ID", () => {
+    const history = SessionManager.inMemory("/tmp"); history.appendMessage(assistantCall("p"));
+    history.appendMessage({...savedParent([], {complete: true, calls: []}), content: [{type: "text", text: "OTHER-SOURCE"}]});
+    const h = fixture({expanded: true, history});
+    h.parent.updateResult(result([], "SUPPLIED-CARD"), false); h.render(); h.emit("turn_end", {});
+    expect(h.render()).toContain("SUPPLIED-CARD"); expect(h.render()).not.toContain("OTHER-SOURCE");
+  });
+
+  it("refreshes retained request summaries after an observed same-object final replacement", () => {
+    const history = SessionManager.inMemory("/tmp"), read = createReadTool("/tmp");
+    history.appendMessage({role: "system", content: "", timestamp: 0,
+      toolsAdded: [{name: "read", description: read.description, parameters: read.parameters}]});
+    history.appendMessage(assistantCall("p"));
+    const message = savedParent([call("p/1")], {complete: true,
+      calls: [{id: "p/1", name: "read", arguments: {path: "/before.ts"}, status: "ok"}]});
+    const entryId = history.appendMessage(message);
+    const h = fixture({expanded: true, history}); h.parent.updateResult(message, false); h.render();
+    h.emit("turn_end", {}); expect(h.render()).toContain("Read /before.ts");
+    message.nestedCalls.calls[0]!.arguments = {path: "/after.ts"};
+    h.emit("message_end", {message}); h.emit("agent_end", {});
+    expect(h.render()).toContain("Read /after.ts"); expect(h.render()).not.toContain("Read /before.ts");
+    expect(h.render()).toContain("Detailed result unavailable");
+    const entry = history.getEntry(entryId);
+    if (entry?.type !== "message") throw new Error("Missing saved parent");
+    entry.message = {...message, nestedCalls: {complete: true,
+      calls: [{id: "p/1", name: "read", arguments: {path: "/new-source.ts"}, status: "ok"}]}};
+    h.emit("message_end", {message: entry.message}); h.emit("agent_end", {});
+    expect(h.render()).toContain("Read /new-source.ts"); expect(h.render()).not.toContain("Read /after.ts");
+  });
+
+  it("preserves validated observed output labels when the final message only wraps the same content", async () => {
+    const history = SessionManager.inMemory("/tmp"), h = fixture({expanded: true, nativeCode: true, history});
+    history.appendMessage(assistantCall("p"));
+    const native = await h.run('text({value: 1}); return 2;');
+    expect(h.render()).toContain("Return value");
+    history.appendMessage({...savedParent([], {complete: true, calls: []}), content: native.content});
+    h.emit("turn_end", {});
+    expect(h.render()).toContain("Return value"); expect(h.render()).toContain("Text 1");
+    h.parent.updateResult(result([], "REPLACED"), false);
+    expect(h.render()).not.toContain("Return value"); expect(h.render()).toContain("REPLACED");
+  });
 });
 
 describe("retained Codemode request summaries", () => {
@@ -1185,6 +1353,48 @@ describe("independent native codemode items", () => {
 
 const compositorSource = process.env["PI_ALT_COMPOSITOR_SOURCE"];
 const toolViewsSource = process.env["PI_TOOL_VIEWS_SOURCE"];
+it.skipIf(!toolViewsSource).each([true, false])("reconciles actual Tool Views child callbacks at final-source replacement (Tool Views first: %s)", async installFirst => {
+  const {default: install} = await import(pathToFileURL(join(toolViewsSource!, "src/index.ts")).href) as {default(pi: ExtensionAPI): void};
+  const root = await mkdtemp(join(tmpdir(), "transcript-tool-views-")), previous = process.env["PI_CODING_AGENT_DIR"];
+  process.env["PI_CODING_AGENT_DIR"] = join(root, "agent");
+  const history = SessionManager.inMemory(root), read = createReadTool(root);
+  history.appendMessage({role: "system", content: "", timestamp: 0,
+    toolsAdded: [{name: "read", description: read.description, parameters: read.parameters}]});
+  const h = fixture({expanded: true, history, install, installFirst, cwd: root});
+  try {
+    const assistant = assistantCall("p");
+    h.emit("message_start", {message: assistant}); history.appendMessage(assistant); h.emit("message_end", {message: assistant});
+    h.start(); h.nestedStart("p/1", "read", {path: "src/pair.ts"}); h.nestedEnd("p/1", "read", "const pair = 1;");
+    h.parent.updateResult(result([call("p/1")], '{"pair":true}'), false);
+    expect(h.render()).toContain("Read src/pair.ts"); expect(h.render()).toContain("1 const pair = 1;");
+    h.emit("tool_execution_end", {toolCallId: "p", toolName: "codemode", isError: false, result: result([call("p/1")])});
+    const message = {...savedParent([call("p/1")], {complete: true,
+      calls: [{id: "p/1", name: "read", arguments: {path: "src/pair.ts"}, status: "ok"}]}),
+      content: [header, {type: "text" as const, text: '{"pair":true}'}]};
+    history.appendMessage(message); h.emit("message_end", {message}); h.emit("turn_end", {});
+    expect(h.render()).toContain("Read src/pair.ts"); expect(h.render()).toContain("1 const pair = 1;");
+    const leaf = history.getLeafId();
+
+    message.content = [header, {type: "text", text: "CURRENT-PARENT"}];
+    h.emit("message_end", {message}); h.emit("turn_end", {});
+    const refreshed = h.render();
+    expect(history.getLeafId()).toBe(leaf); expect(refreshed).toContain("CURRENT-PARENT");
+    expect(refreshed).toContain("1 const pair = 1;");
+    expect(refreshed).not.toContain('"pair": true');
+
+    message.details.calls = []; message.nestedCalls.calls = []; message.content = [header, {type: "text", text: "WITHDRAWN"}];
+    h.emit("message_end", {message}); h.emit("turn_end", {});
+    expect(h.render()).toContain("WITHDRAWN"); expect(h.render()).not.toContain("const pair = 1;");
+    expect(h.targets().some(target => target.label.includes("src/pair.ts"))).toBe(false);
+    h.emit("agent_end", {});
+    expect(h.render()).not.toContain("const pair = 1;");
+  } finally {
+    h.emit("session_shutdown", {});
+    if (previous === undefined) delete process.env["PI_CODING_AGENT_DIR"]; else process.env["PI_CODING_AGENT_DIR"] = previous;
+    await rm(root, {recursive: true, force: true});
+  }
+});
+
 it.skipIf(!toolViewsSource)("keeps actual Tool Views call renderers while output uses the native display path", async () => {
   const {default: install} = await import(pathToFileURL(join(toolViewsSource!, "src/index.ts")).href) as {default(pi: ExtensionAPI): void};
   let renderer: ToolRendererResolver | undefined;

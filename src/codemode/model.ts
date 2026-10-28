@@ -67,6 +67,7 @@ export class CodemodeFacts {
   private sealed = false;
   private invalid = false;
   private current: readonly ActivityRecord[] | undefined;
+  private currentNames = new Map<string, string>();
   private outputValue: ScriptOutput | undefined;
   private outcomeValue: ParentOutcome | undefined;
   revision = 0;
@@ -109,11 +110,12 @@ export class CodemodeFacts {
 
   private fault(): void {
     this.invalid = true; this.captureClosed = true; this.invocations.clear(); this.ambiguous.clear(); this.known.clear();
+    this.current = undefined; this.currentNames.clear(); this.outputValue = undefined; this.outcomeValue = undefined;
     this.revision++;
   }
 
   observe(result: unknown, isPartial: boolean, witness?: OutputWitness): void {
-    if (this.sealed || this.invalid) return;
+    if (this.invalid || (this.sealed && isPartial)) return;
     const calls = isRecord(result) && isRecord(result.details) ? result.details.calls : undefined;
     const records = activityRecords(calls);
     if (!records) {
@@ -121,30 +123,31 @@ export class CodemodeFacts {
       else this.revision++;
       return;
     }
-    const ids = new Set<string>();
+    const ids = new Map<string, string>();
     for (const record of records) {
-      const previous = this.known.get(record.ordinal);
+      const previous = this.sealed ? undefined : this.known.get(record.ordinal);
       const id = this.realId(record), priorId = previous && this.realId(previous);
       if ((previous && previous.name !== record.name) || (id && priorId && id !== priorId) || (id && ids.has(id))) {
         this.fault(); return;
       }
-      if (id) ids.add(id);
-      this.known.set(record.ordinal, priorId && !id ? previous! : record);
+      if (id) ids.set(id, record.name);
+      if (!this.sealed) this.known.set(record.ordinal, priorId && !id ? previous! : record);
     }
     this.current = records;
+    this.currentNames = ids;
     if (!isPartial) {
       this.closeCapture();
       this.sealed = true;
-      this.outputValue = scriptOutput(result, witness);
+      this.outputValue = scriptOutput(result, witness, this.outputValue);
       this.outcomeValue = Object.freeze({ isError: isRecord(result) && result.isError === true, durationMs: toolDurationMs(result, false) });
-      const retained = new Set(records.flatMap(record => this.realId(record) ?? []));
-      for (const id of this.invocations.keys()) if (!retained.has(id)) this.invocations.delete(id);
+      for (const [id, invocation] of this.invocations) if (ids.get(id) !== invocation.name) this.invocations.delete(id);
       this.known.clear(); this.ambiguous.clear();
     }
     this.revision++;
   }
 
   matched(record: ActivityRecord): MatchedTerminal | undefined {
+    if (this.invalid || this.current?.[record.ordinal] !== record) return undefined;
     const id = this.realId(record);
     const invocation = id && this.invocations.get(id);
     if (!id || !invocation || invocation.name !== record.name || !invocation.terminal) return undefined;
@@ -153,12 +156,13 @@ export class CodemodeFacts {
 
   owns(terminal: MatchedTerminal): boolean {
     const invocation = this.invocations.get(terminal.id);
-    return terminal[terminalBrand] === this && invocation?.name === terminal.name &&
+    return !this.invalid && terminal[terminalBrand] === this && invocation?.name === terminal.name &&
+      this.currentNames.get(terminal.id) === terminal.name &&
       invocation.request === terminal.request && invocation.terminal === terminal.terminal;
   }
 
   ownsOutput(output: ScriptOutput | OutputPart): boolean {
-    return this.sealed && (this.outputValue === output ||
+    return !this.invalid && this.sealed && (this.outputValue === output ||
       ("segments" in output && this.outputValue?.parts?.[output.ordinal] === output));
   }
 
@@ -169,7 +173,9 @@ export class CodemodeFacts {
   }
 
   dispose(): void {
-    this.captureClosed = true; this.invocations.clear(); this.ambiguous.clear(); this.known.clear();
+    this.invalid = true; this.captureClosed = true; this.invocations.clear(); this.ambiguous.clear(); this.known.clear();
     this.current = undefined; this.outputValue = undefined; this.outcomeValue = undefined;
+    this.currentNames.clear();
+    this.revision++;
   }
 }
