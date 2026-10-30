@@ -52,7 +52,7 @@ Generation length and display width are different limits. Generation length coun
 | Command display width | `display.commandMaxWidth` | 120 | Integer, 1–4096 terminal columns |
 | Intent display width | `display.intentMaxWidth` | 48 | Integer, 1–4096 terminal columns |
 
-**Total row width** caps the whole summary, including indentation, the expansion marker, description, status, counts and purpose. The viewport can impose a smaller limit. Expanded output is not subject to this summary cap.
+**Total row width** caps the whole tool summary, including indentation, the expansion marker, description, status, counts and purpose. The viewport can impose a smaller limit. Expanded output is not subject to this summary cap.
 
 Command and intent widths are additional ceilings, not reserved allocations. Space is shared: short or absent purpose text leaves more room for the description. Increasing command width alone may have no effect if the total row or terminal is already the limiting factor.
 
