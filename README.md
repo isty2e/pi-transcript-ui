@@ -1,8 +1,8 @@
 # pi-transcript-ui
 
-Compact tool summaries for Pi, with optional purpose text and groups of adjacent calls. Tool execution and expanded output remain Pi's own.
+Compact tool summaries for Pi, with optional purpose text and groups of adjacent calls. Compaction checkpoints also fold into one-line rows. Tool execution, expanded tool output and session data remain Pi's own.
 
-A collapsed Read group, an expanded Edit group, [shell-session calls](docs/usage.md#shell-sessions) and [native codemode](docs/usage.md#codemode):
+A collapsed Read group, an expanded Edit group, [shell-session calls](docs/usage.md#shell-sessions), [native codemode](docs/usage.md#codemode) and a compaction checkpoint:
 
 ```text
 ▸ Read 2 files (4 lines)
@@ -16,6 +16,7 @@ A collapsed Read group, an expanded Edit group, [shell-session calls](docs/usage
   ▸ Read 2 calls
   ▸ Ran npm test (0.4s)
   ▸ Script output
+▸ Compacted from 42,123 tokens
 ```
 
 Expand an individual call to see its original output. Read groups count known files, or calls when file information is unavailable. Mutation groups count calls, not unique files. Other counts are shown only when usable evidence is available.
@@ -27,6 +28,8 @@ Script output can unfold into individual text, return-value, console and image i
 Action labels follow the call's phase, such as `Run` → `Running` → `Ran`. Completed calls use the past tense even on failure; existing error colors and markers show the outcome. See [labels and status](docs/usage.md#counts-and-status).
 
 Individual summaries show recorded tool duration by default when available. Turn it off under **Display → Tool duration**; the same setting applies to codemode and other tools. See [duration details](docs/usage.md#tool-duration).
+
+Compaction rows expand to show the original summary, native billing and recognized linked details. They are not tool calls or members of tool groups. See [compaction details and warnings](docs/usage.md#compaction).
 
 ## Install
 

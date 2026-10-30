@@ -9,6 +9,8 @@ import { defaultSettings, groupingRules, SettingsFile } from "./settings.js";
 import { editSettings } from "./settings-ui.js";
 import { CodemodeRuntime } from "./codemode/pi.js";
 import { CodemodePresentation } from "./codemode/view.js";
+import { CompactionRuntime } from "./compaction/pi.js";
+import { observeNativeMode, NativeModeCleanupError, type NativeModeObservation } from "./native-mode.js";
 import packageMetadata from "../package.json" with { type: "json" };
 
 export const TRANSCRIPT_UI_VERSION = packageMetadata.version;
@@ -28,6 +30,11 @@ export default function transcriptUi(pi: ExtensionAPI): void {
   let settings = defaultSettings();
   const codemode = new CodemodeRuntime(pi, () => settings.display.codemode);
   const codemodePresentation = new CodemodePresentation(codemode);
+  const compaction = new CompactionRuntime();
+  let nativeObservation: NativeModeObservation | undefined;
+  let nativeFailure: unknown;
+  let pendingDiscoveryCleanup: (() => void) | undefined;
+  let nativeContext: ExtensionContext | undefined;
   let detach: PresentationAttachment | undefined;
   let closeNavigator: (() => void) | undefined;
   let reconfigure: (() => void) | undefined;
@@ -55,8 +62,23 @@ export default function transcriptUi(pi: ExtensionAPI): void {
       });
     } finally { closeNavigator = undefined; }
   };
+  const reportNativeFailure = (error: unknown): void => {
+    nativeFailure = error;
+    if (error instanceof NativeModeCleanupError) pendingDiscoveryCleanup = error.retryCleanup;
+    if (!nativeContext || nativeContext.mode !== "tui") return;
+    const message = `Native transcript presentation kept its existing display: ${String(error)}`;
+    if (!warned.has(message)) { warned.add(message); notify(nativeContext, message, "warning"); }
+  };
+  const stopNative = (): void => {
+    const failures: unknown[] = [];
+    try { compaction.dispose(); } catch (error) { failures.push(error); }
+    try { nativeObservation?.dispose(); nativeObservation = undefined; } catch (error) { failures.push(error); }
+    try { pendingDiscoveryCleanup?.(); pendingDiscoveryCleanup = undefined; } catch (error) { failures.push(error); }
+    if (failures.length) reportNativeFailure(new AggregateError(failures, "Native transcript cleanup is incomplete"));
+  };
   pi.registerShortcut("ctrl+shift+o", { description: "Navigate tool groups and members", handler: navigate });
   pi.on("session_start", async (_event, ctx) => {
+    nativeContext = ctx;
     closeNavigator?.();
     detach?.(); detach = undefined; reconfigure = undefined;
     codemodePresentation.dispose(); codemode.stop();
@@ -69,7 +91,9 @@ export default function transcriptUi(pi: ExtensionAPI): void {
     catch (error) { notify(ctx, `Settings not loaded: ${String(error)}`, "error"); }
     intents.restore(ctx.sessionManager.getBranch());
     codemode.start(ctx);
-    if (ctx.mode !== "tui") return;
+    if (ctx.mode !== "tui") { stopNative(); return; }
+    if (nativeObservation?.error) reportNativeFailure(nativeObservation.error);
+    else if (nativeFailure) reportNativeFailure(nativeFailure);
     live = true;
     ctx.ui.setWidget(WIDGET_KEY, (tui) => {
       codemode.setRoot(tui);
@@ -77,7 +101,7 @@ export default function transcriptUi(pi: ExtensionAPI): void {
         closeNavigator?.();
         detach?.(); detach = undefined;
         if (!live) return;
-        if (attachmentFailure) { codemode.start(ctx); codemode.setRoot(tui); }
+        if (attachmentFailure) { codemode.start(ctx); codemode.captureMode(nativeObservation?.mode); codemode.setRoot(tui); }
         try {
           detach = attachTranscriptPresentation(tui, {
             getTheme: () => ctx.ui.theme, requestRender: () => tui.requestRender(), rules: groupingRules(settings), displayLimits: settings.display,
@@ -115,11 +139,14 @@ export default function transcriptUi(pi: ExtensionAPI): void {
   pi.on("session_tree", (_event, ctx) => { intents.restore(ctx.sessionManager.getBranch()); });
   pi.on("session_shutdown", (_event, ctx) => {
     live = false;
-    codemode.shutdown();
-    closeNavigator?.();
-    detach?.(); detach = undefined; reconfigure = undefined;
-    codemodePresentation.dispose();
-    if (ctx.mode === "tui") ctx.ui.setWidget(WIDGET_KEY, undefined);
+    const failures: unknown[] = [];
+    for (const cleanup of [
+      () => codemode.shutdown(), stopNative, () => closeNavigator?.(),
+      () => { detach?.(); detach = undefined; reconfigure = undefined; },
+      () => codemodePresentation.dispose(),
+      () => { if (ctx.mode === "tui") ctx.ui.setWidget(WIDGET_KEY, undefined); },
+    ]) try { cleanup(); } catch (error) { failures.push(error); }
+    if (failures.length) notify(ctx, `Transcript cleanup incomplete: ${String(failures[0])}`, "error");
   });
   pi.on("before_agent_start", (event) => {
     const options = event.systemPromptOptions;
@@ -167,25 +194,35 @@ export default function transcriptUi(pi: ExtensionAPI): void {
     { name: "tools", description: "Navigate tool groups and members (Ctrl+Shift+O).", handler: navigate },
     { name: "help", description: "Show command help.", handler: showHelp },
   ];
+  const commandHandler = async (args: string, ctx: ExtensionContext): Promise<void> => {
+    const name = args.trim() || "help";
+    const command = subcommands.find(command => command.name === name);
+    if (!command) {
+      notify(ctx, `Usage: /transcript-ui <${subcommands.map(command => command.name).join("|")}>`, "warning");
+      return;
+    }
+    await command.handler(ctx);
+  };
   pi.registerCommand("transcript-ui", {
     description: "Tool presentation settings and navigation.",
     getArgumentCompletions: (prefix) => {
       const matches = subcommands.filter(command => command.name.startsWith(prefix.trimStart()));
       return matches.length ? matches.map(command => ({ value: command.name, label: command.name, description: command.description })) : null;
     },
-    handler: async (args, ctx) => {
-      const name = args.trim() || "help";
-      const command = subcommands.find(command => command.name === name);
-      if (!command) {
-        notify(ctx, `Usage: /transcript-ui <${subcommands.map(command => command.name).join("|")}>`, "warning");
-        return;
-      }
-      await command.handler(ctx);
-    },
+    handler: commandHandler,
   });
   const marker = process.env["PI_TRANSCRIPT_UI_LOAD_MARKER"];
   if (marker) {
     try { appendFileSync(marker, `loaded ${TRANSCRIPT_UI_VERSION} ${Date.now()}\n`); }
     catch { /* optional diagnostic */ }
   }
+
+  try {
+    nativeObservation = observeNativeMode(pi, commandHandler, (mode, original, args) => {
+      codemode.captureMode(mode);
+      let attachment;
+      try { attachment = compaction.attach(mode); } catch (error) { reportNativeFailure(error); }
+      return attachment ? () => attachment.adoptSourceRender(args, () => Reflect.apply(original, mode, args)) : undefined;
+    });
+  } catch (error) { reportNativeFailure(error); }
 }

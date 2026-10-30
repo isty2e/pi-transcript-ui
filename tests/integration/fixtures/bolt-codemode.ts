@@ -9,6 +9,7 @@ import { attachTranscriptPresentation, type NativeToolComponent } from "../../..
 import { CodemodeRuntime } from "../../../src/codemode/pi.js";
 import { CodemodePresentation } from "../../../src/codemode/view.js";
 import type { DisplayLimits } from "../../../src/display.js";
+import { observeNativeMode, type NativeModeObservation } from "../../../src/native-mode.js";
 
 interface ModeFixtureAccess {
   ui: Container;
@@ -16,6 +17,7 @@ interface ModeFixtureAccess {
   documentContainer: Container;
   isInitialized: boolean;
   bindCurrentSessionExtensions(): Promise<void>;
+  renderSessionEntries(entries: ReturnType<SessionManager["buildContextEntries"]>): void;
   handleEvent(event: Record<string, unknown>): Promise<void>;
   stop(): void;
 }
@@ -27,6 +29,7 @@ export default function codemodeFixture(pi: ExtensionAPI) {
     const cases: string[] = [];
     let session: Awaited<ReturnType<typeof createAgentSessionFromServices>>["session"] | undefined;
     let runtime: CodemodeRuntime | undefined, presentation: CodemodePresentation | undefined;
+    let observation: NativeModeObservation | undefined;
     let mode: InteractiveMode | undefined, detach: ReturnType<typeof attachTranscriptPresentation> | undefined;
     let layout: DisplayLimits["codemode"] = "items", ownSource = false, executed = 0, requests = 0;
     let terminalStarts = 0, terminalWrites = 0, invalidateChild: (() => void) | undefined;
@@ -35,6 +38,9 @@ export default function codemodeFixture(pi: ExtensionAPI) {
     try {
       const fixture: ExtensionFactory = api => {
         runtime = new CodemodeRuntime(api, () => layout);
+        const ownerCommand = async () => {};
+        api.registerCommand("transcript-ui", { handler: ownerCommand });
+        observation = observeNativeMode(api, ownerCommand, captured => { runtime!.captureMode(captured); return undefined; });
         api.on("session_start", async (_event, ctx) => {
           fixtureContext = ctx;
           runtime!.start(ctx);
@@ -86,6 +92,7 @@ export default function codemodeFixture(pi: ExtensionAPI) {
       // Keep native construction/binding/dispatch, but bypass startup's managed tools and terminal negotiation.
       access.ui.addChild(access.documentContainer); access.isInitialized = true;
       await access.bindCurrentSessionExtensions();
+      access.renderSessionEntries(session.sessionManager.buildContextEntries());
       presentation = new CodemodePresentation(runtime!);
       const attach = () => attachTranscriptPresentation(access.ui, {
         getTheme: () => ({ bold: text => text, fg: (_style, text) => text }), requestRender() { requests++; },
@@ -233,6 +240,7 @@ export default function codemodeFixture(pi: ExtensionAPI) {
       writeFileSync(output, JSON.stringify({ ok: false, version: VERSION, cases, error: String(error), stack: error instanceof Error ? error.stack : undefined }));
     } finally {
       detach?.(); presentation?.dispose(); runtime?.shutdown();
+      observation?.dispose();
       (mode as unknown as ModeFixtureAccess | undefined)?.stop(); session?.dispose(); context.shutdown();
     }
   });

@@ -74,29 +74,6 @@ function renderable(value: unknown): value is Component {
   return isRecord(value) && typeof value.render === "function" && typeof value.invalidate === "function";
 }
 
-/** A short-lived observation of Pi's normal lookup, never an execution interceptor. */
-function discover(receive: (mode: unknown) => void): () => void {
-  let prototype: object;
-  try { prototype = Pi.InteractiveMode.prototype; } catch { return () => {}; }
-  const before = Object.getOwnPropertyDescriptor(prototype, "getRegisteredToolDefinition");
-  if (!before || typeof before.value !== "function" || !before.configurable || !before.writable) return () => {};
-  const original = before.value as (this: unknown, name: string) => unknown;
-  let active = true;
-  const release = () => {
-    active = false;
-    if (Object.getOwnPropertyDescriptor(prototype, "getRegisteredToolDefinition")?.value === observe)
-      Object.defineProperty(prototype, "getRegisteredToolDefinition", before);
-  };
-  function observe(this: unknown, name: string): unknown {
-    if (active) {
-      try { release(); receive(this); } catch { /* Discovery cannot replace Pi's result or exception. */ }
-    }
-    return original.call(this, name);
-  }
-  Object.defineProperty(prototype, "getRegisteredToolDefinition", { ...before, value: observe });
-  return release;
-}
-
 export class CodemodeRuntime {
   private captured: unknown;
   private root: unknown;
@@ -110,12 +87,10 @@ export class CodemodeRuntime {
   private readonly payloads = new Map<EvidenceHandle, { owner: CodemodeFacts; payload: Payload }>();
   private outputs = new WeakMap<CodemodeFacts, {execution: Execution; witness: OutputWitness}>();
   private outputObserver: CodemodeOutputObserver | undefined;
-  private releaseLookup: () => void;
   private history: {manager: ExtensionContext["sessionManager"]; session: string; leaf: string | null;
     sources: WeakMap<object, HistoricalDeclaration>} | undefined;
 
   constructor(private readonly pi: ExtensionAPI, readonly requested: () => DisplayLimits["codemode"]) {
-    this.releaseLookup = discover(mode => { this.captured = mode; this.watchOutput(); });
     pi.on("tool_execution_start", event => {
       if (!this.active) return;
       if (event.parentToolCallId) {
@@ -199,14 +174,12 @@ export class CodemodeRuntime {
     this.dirtyParents.clear();
   }
 
+  captureMode(mode: unknown): void { this.captured = mode; this.watchOutput(); }
+
   start(context: ExtensionContext): void {
     this.stop();
     this.context = context;
-    if (context.mode !== "tui") { this.releaseLookup(); return; }
-    if (this.captured === undefined) {
-      this.releaseLookup();
-      this.releaseLookup = discover(mode => { this.captured = mode; this.watchOutput(); });
-    }
+    if (context.mode !== "tui") return;
     this.active = true;
     this.outputObserver = new CodemodeOutputObserver(id => {
       const execution = this.executions.get(id);
@@ -381,7 +354,7 @@ export class CodemodeRuntime {
     this.bindings.clear(); this.executions.clear(); this.payloads.clear(); this.completed.clear(); this.dirtyParents.clear();
     this.context = undefined; this.root = undefined; this.indexed = false;
   }
-  shutdown(): void { this.stop(); this.releaseLookup(); this.captured = undefined; }
+  shutdown(): void { this.stop(); this.captured = undefined; }
 }
 
 export class CodemodeParent {

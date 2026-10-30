@@ -2,15 +2,15 @@
 
 [Back to README](../README.md)
 
-pi-transcript-ui presents tool summaries in interactive Pi sessions. Compatibility outside the tested surfaces below, including arbitrary combinations of UI extensions, is not assured.
+pi-transcript-ui presents tool summaries and compaction checkpoints in interactive Pi sessions. Compatibility outside the tested surfaces below, including arbitrary combinations of UI extensions, is not assured.
 
 ## Tested hosts
 
 | Pi host | Current test coverage |
 | --- | --- |
-| 1.3.0 | Primary suite: summaries, intent transport and persistence, native components, grouping, navigation and compositor fixtures |
-| 1.1.0 | Shared UI/session/compositor fixtures, structured prompts and native codemode execution |
-| 0.85.1 | Shared UI/session/compositor fixtures and legacy string prompts; no native codemode |
+| 1.3.0 | Primary suite: summaries, intent transport and persistence, native components, grouping, navigation, compaction and compositor fixtures |
+| 1.1.0 | Shared UI/session/compositor and compaction fixtures, structured prompts and native codemode execution |
+| 0.85.1 | Shared UI/session/compositor and compaction fixtures and legacy string prompts; no native codemode |
 
 Opt-in native-component checks also cover Pi 1.4.0 / Pi-Bolt 1.0.0 (`darwin-arm64-jit`): partial/final result updates, independent group/member expansion, parent rendering, detach/reattach, and original image bytes in default and self-rendered shells. Codemode checks exercise native mode construction, extension binding, renderer-owned source controls, completed child bodies, Script output, indented/flat/Original switching and retired callbacks. They combine controlled events with one pure codemode VM execution through the session's registered tool, checking separate text, return-value and console items. They use a memory terminal, without nested tool/model calls or full application startup. Pi-Bolt is not a CI host. These checks run only when `PI_TRANSCRIPT_UI_TEST_BOLT` points to a Pi-Bolt executable; they do not establish complete terminal or extension-stack compatibility.
 
@@ -21,6 +21,8 @@ Test admission follows release capabilities: structured prompt sections from 0.8
 [Codemode coverage](usage.md#codemode) includes real sandbox execution, partial updates, saved results and native expanded-body rendering. Independent items additionally use the primary host's native components and renderer dispatch, with terminal-only body association, original-parent fallback and compositor-cache/control fixtures. Those item-specific checks are not a blanket older-host or full terminal claim. The extension does not add codemode to older hosts.
 
 [Shell-session summaries](usage.md#shell-sessions) use provider-shaped requests and receipts with real native tool components. These tests do not execute the external providers or run the presentation extension through Pi's extension loader.
+
+[Compaction checks](usage.md#compaction) use the product extension with real native-mode construction and session services for tool-free source rendering, reload, new/fork/resume, original records, billing, producer-shaped details and disclosure. They also cover shared Codemode discovery where available and steady rendering without full-history or command-registry queries. These memory-terminal tests do not establish complete terminal startup or compatibility with every compaction extension.
 
 ## PiG
 
@@ -73,6 +75,8 @@ Independent Codemode activity and output bodies omit the native leading card sep
 Recorded Codemode request summaries can use retained arguments or complete values from a native truncated preview without restoring a child body. Requested ranges and content sizes are labelled as requested, not measured output. Historical custom declarations come from the parent occurrence's branch prefix; a later registry or compaction checkpoint does not replace that source. Missing/conflicting declarations can limit interpretation. These display-only summaries do not add an execution journal, rerun tools, read referenced files or change renderer dispatch.
 
 Summaries do not replace tool execution or permissions. Command previews and line counts are not a security review, an execution trace or a complete filesystem diff.
+
+Compaction presentation depends on the host's native source and instance-rendering boundaries. Unsupported hosts or opaque instance overrides retain their existing view. Recognized explicitly linked producer records can fold with their checkpoint; arbitrary compaction UI replacement/hiding policies are not coordinated or overridden.
 
 ## Intent prompt composition
 
