@@ -77,7 +77,7 @@ it("preserves empty, cancelled and running records without converting nested sta
     component.updateResult(result([], false, 0));
     expect(text(chat)).toBe("\n▸ Ran code (0 nested calls) (0.0s)");
     component.updateResult(result([call("models.classify", "cancelled"), call("bash", "running")], false, NaN));
-    expect(text(chat)).toBe("\n▸ Ran code models.classify, bash (2 nested calls; 1 running; 1 cancelled)");
+    expect(text(chat)).toBe("\n▸ Ran code models.classify, bash (2 nested calls; 1 completion unknown; 1 cancelled)");
   } finally { dispose(); }
 });
 

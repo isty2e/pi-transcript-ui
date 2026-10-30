@@ -148,7 +148,7 @@ it("summarizes actual host execution, progress and persisted results without rep
         const targets = itemsDetach!.targets();
         expect(targets.length).toBeGreaterThanOrEqual(3);
         expect(targets[0]!.label).toContain("Ran code");
-        expect(targets[1]!.label).toContain("Source");
+        expect(targets[1]!.label).toContain("Call");
         expect(targets[1]!.parent).toBe(targets[0]);
         expect(items).not.toContain("Detailed result unavailable");
         targets[1]!.setExpanded(false);

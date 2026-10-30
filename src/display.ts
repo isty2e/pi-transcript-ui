@@ -5,7 +5,7 @@ import { stripTerminalSequences, truncateToWidth, visibleWidth } from "@earendil
 import type { FileRead } from "./read-body.js";
 import type { SummaryMetrics } from "./tool-metrics.js";
 import type { EditDelta } from "./edit-delta.js";
-import { fileMutationPath, type FileMutation } from "./file-mutation.js";
+import { fileMutationTarget, type FileMutation } from "./file-mutation.js";
 import { commandPreview, type CommandPreviewMode } from "./command-preview.js";
 import { pathPreview } from "./path-preview.js";
 import type { PatchRequest } from "./patch-request.js";
@@ -144,7 +144,7 @@ function lsDisplay(args: unknown): ToolDisplay | null {
 export function displayFor(toolName: unknown, args: unknown, capability?: FileMutation, reader?: FileRead, patch?: PatchRequest): ToolDisplay | null {
   try {
     if (capability) {
-      const path = fileMutationPath(capability, args);
+      const path = fileMutationTarget(capability, args);
       return path === undefined ? null : { action: capability.action, target: { kind: "path", path: compactHome(path) } };
     }
     if (reader) return readDisplay(args);
@@ -249,10 +249,10 @@ function clip(text: string, width: number): string {
 }
 
 function summaryParts(toolName: string, display: ToolDisplay | null, outcome: string, phase: ToolPhase,
-  { intent, layout = {}, durationMs }: ToolSummaryContext, delta?: EditDelta): LineParts {
+  { intent, layout = {}, durationMs }: ToolSummaryContext, delta?: EditDelta, actionOverride?: string): LineParts {
   const limits = { ...DEFAULT_DISPLAY_LIMITS, ...layout.limits };
   const width = Math.min(layout.width ?? limits.rowMaxWidth, limits.rowMaxWidth);
-  const action = display ? actionForms[display.action][phase] : toolName;
+  const action = actionOverride ?? (display ? actionForms[display.action][phase] : toolName);
   const streaming = phase !== "settled";
   const ending = streaming ? "…" : "";
   const duration = !streaming && limits.toolDuration && durationMs !== undefined ? toolDurationText(durationMs) : undefined;
@@ -287,23 +287,44 @@ export function runningLine(
   return summaryParts(toolName, display, outcome, phase, { intent, layout });
 }
 
+export function requestOnlyLine({toolName, display, status, phase, requestedExtent, requestedLines, exitCode, ...context}: {
+  readonly toolName: string;
+  readonly display: ToolDisplay | null;
+  readonly status: "running" | "ok" | "error" | "cancelled" | "unknown";
+  readonly phase: ToolPhase;
+  readonly requestedExtent?: string | undefined;
+  readonly requestedLines?: number | undefined;
+  readonly exitCode?: number | undefined;
+} & ToolSummaryContext): LineParts {
+  const state = status === "error" ? " — error" : status === "cancelled" ? " — cancelled" : status === "unknown" ? " — completion unknown" : "";
+  const annotation = display?.target.kind === "patch-request" ? requestedPatchText(display.target.request.delta)
+    : requestedExtent ? `(${requestedExtent})` : requestedLines !== undefined ? `(requested ${pluralLines(requestedLines)})` : undefined;
+  const outcome = `${state}${annotation ? ` ${annotation}` : ""}${exitCode === undefined ? "" : ` (exit ${exitCode})`}`;
+  const action = status === "unknown" ? toolName : phase === "settled" && display && ["Write", "Edit", "Patch"].includes(display.action) ? display.action : undefined;
+  return summaryParts(toolName, display, outcome, phase, context, undefined, action);
+}
+
 /** An opaque producer preview is not a tool request or an output count. */
-export function recordedActivityLine(name: string, preview: string | undefined, status: "running" | "ok" | "error" | "cancelled",
+export function recordedActivityLine(name: string, preview: string | undefined, status: "running" | "ok" | "error" | "cancelled" | "unknown",
   layout: RowLayout, durationMs?: number, declaredAction?: ToolDisplay["action"]): LineParts {
   const action = declaredAction ?? recordedActions.get(name);
   const display: ToolDisplay | null = action ? { action, target: { kind: "none" } } : null;
-  const outcome = `${preview ? ` ${stripTerminalSequences(preview)}` : ""}${status === "error" ? " — error" : status === "cancelled" ? " — cancelled" : ""}`;
-  return summaryParts(name, display, outcome, status === "running" ? "running" : "settled", { layout, durationMs });
+  const outcome = `${preview ? ` ${stripTerminalSequences(preview)}` : ""}${status === "error" ? " — error" : status === "cancelled" ? " — cancelled" : status === "unknown" ? " — completion unknown" : ""}`;
+  return summaryParts(name, display, outcome, status === "running" ? "running" : "settled", { layout, durationMs }, undefined, status === "unknown" ? name : undefined);
+}
+
+export function shellSessionDisplay(summary: ShellSessionSummary): ToolDisplay {
+  const target: DisplayTarget = summary.action !== "Run" ? { kind: "none" }
+    : !summary.commandSyntax ? { kind: "opaque-command", command: summary.command }
+    : { kind: "command", command: summary.command, ...(summary.commandSyntax === "zsh" ? { shell: summary.commandSyntax } : {}) };
+
+  return {action: summary.action, target};
 }
 
 export function shellSessionLine(summary: ShellSessionSummary, isError: boolean, phase: ToolPhase,
   context: ToolSummaryContext = {}): LineParts {
   const outcome = `${isError ? " — error" : ""}${summary.exitCode === undefined ? "" : ` (exit ${summary.exitCode})`}`;
-  const target: DisplayTarget = summary.action !== "Run" ? { kind: "none" }
-    : !summary.commandSyntax ? { kind: "opaque-command", command: summary.command }
-    : { kind: "command", command: summary.command, ...(summary.commandSyntax === "zsh" ? { shell: summary.commandSyntax } : {}) };
-
-  return summaryParts(summary.action, { action: summary.action, target }, outcome, phase, context);
+  return summaryParts(summary.action, shellSessionDisplay(summary), outcome, phase, context);
 }
 
 function toolDurationText(ms: number): string {
@@ -325,6 +346,7 @@ export function codemodeLine({ summary, isError, ...context }: {
     const { total, running, errors, cancelled } = summary.calls;
     facts.push(`${total} nested ${total === 1 ? "call" : "calls"}${summary.phase !== "settled" ? " so far" : ""}`);
     if (running) facts.push(`${running} running`);
+    if (summary.calls.completionUnknown) facts.push(`${summary.calls.completionUnknown} completion unknown`);
     if (errors) facts.push(`${errors} ${errors === 1 ? "error" : "errors"}`);
     if (cancelled) facts.push(`${cancelled} cancelled`);
   }
@@ -365,6 +387,7 @@ export function settledLine({
   if (!delta && (display?.action === "Write" || display?.action === "Edit" || toolName === "write" || toolName === "edit")) {
     return summaryParts(toolName, display, isError ? " — error" : "", "settled", context);
   }
+  if (!Array.isArray(content)) return summaryParts(toolName, display, isError ? " — error" : "", "settled", context);
   const lines = countResultLines(content);
   const unit = unitFor(toolName);
   const outcome = delta && !isError ? changeText(delta) : isError

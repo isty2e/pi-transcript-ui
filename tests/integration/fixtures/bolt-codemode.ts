@@ -122,6 +122,7 @@ export default function codemodeFixture(pi: ExtensionAPI) {
         execution.setExpanded(true); render();
         assert.equal(detach.targets().length, 4, "Original fallback must not count as item coverage");
         const [, source, child, script] = detach.targets();
+        assert.ok(source!.label.includes("Call"));
         child!.setExpanded(true); script!.setExpanded(true);
         assert.ok(render().includes("CHILD BODY") && render().includes("SCRIPT OUTPUT"));
         source!.setExpanded(true);
@@ -181,7 +182,7 @@ export default function codemodeFixture(pi: ExtensionAPI) {
       codeDefinition.execute = originalExecute;
       assert.ok(fixtureContext);
       runtime!.start(fixtureContext); runtime!.setRoot(access.ui);
-      const code = "text('FIRST'); console.log('NOTE'); return 'RETURN';";
+      const code = "text({first:1}); console.log('NOTE'); return 'RETURN';";
       await emit({type: "tool_execution_start", toolName: "codemode", toolCallId: "vm-output", args: {code}});
       const tool = session.agent.state.tools.find(tool => tool.name === "codemode");
       assert.ok(tool);
@@ -191,6 +192,7 @@ export default function codemodeFixture(pi: ExtensionAPI) {
         updates.push(emit({type: "tool_execution_update", toolName: "codemode", toolCallId: "vm-output", partialResult: partial}));
       });
       await Promise.all(updates);
+      const originalContent = structuredClone(final.content);
       await emit({type: "tool_execution_end", toolName: "codemode", toolCallId: "vm-output", isError: final.isError === true, result: final});
       render();
       detach.targets()[0]!.setExpanded(true); render();
@@ -203,7 +205,10 @@ export default function codemodeFixture(pi: ExtensionAPI) {
       assert.ok(outputs[1]!.label.includes("Return value"));
       assert.ok(outputs[2]!.label.includes("Console output"));
       outputs[0]!.setExpanded(true);
-      assert.ok(render().split("\n").some(line => line.trim() === "FIRST"));
+      const formatted = render().split("\n").map(line => line.trimEnd()).join("\n");
+      assert.ok(formatted.includes('{\n  "first": 1\n}'));
+      assert.ok(!formatted.includes("pi-transcript-ui:codemode-output"));
+      assert.deepEqual(final.content, originalContent);
       access.chatContainer.clear(); render();
       cases.push("actual registered native executor: witnessed text/return/console and independent output disclosure");
 

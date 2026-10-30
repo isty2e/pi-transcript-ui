@@ -28,12 +28,13 @@ function receiptExitCode(details: unknown, toolName: string): number | undefined
 }
 
 /** Project the common request subset; unknown schemas, input channels and receipts stay opaque. */
-export function shellSessionSummary({ toolName, parameters, args, result, isPartial }: {
+export function shellSessionSummary({ toolName, parameters, args, result, isPartial, completeRequest = true }: {
   readonly toolName: string;
   readonly parameters: unknown;
   readonly args: unknown;
   readonly result?: { details?: unknown } | undefined;
   readonly isPartial: boolean;
+  readonly completeRequest?: boolean;
 }): ShellSessionSummary | undefined {
   try {
     if (toolName !== "exec_command" && toolName !== "write_stdin") return undefined;
@@ -42,7 +43,7 @@ export function shellSessionSummary({ toolName, parameters, args, result, isPart
 
     const fields = parameters.properties;
     const requiredKeys = parameters.required;
-    if (requiredKeys.some((key: string) => !Object.hasOwn(args, key) || args[key] === undefined)) return undefined;
+    if (completeRequest && requiredKeys.some((key: string) => !Object.hasOwn(args, key) || args[key] === undefined)) return undefined;
     const required = (key: string, type: string) => requiredKeys.includes(key) && isRecord(fields[key]) && fields[key].type === type;
 
     const exit = !isPartial ? receiptExitCode(result?.details, toolName) : undefined;
@@ -64,6 +65,7 @@ export function shellSessionSummary({ toolName, parameters, args, result, isPart
       !isRecord(fields.chars) || fields.chars.type !== "string" ||
       Object.keys(fields).some(key => !stdinFields.has(key)) ||
       Object.keys(args).some(key => !stdinFields.has(key))) return undefined;
+    if (!completeRequest && (!Object.hasOwn(args, "chars") || (Object.hasOwn(fields, "chars_b64") && !Object.hasOwn(args, "chars_b64")))) return undefined;
     if (args.chars !== undefined && typeof args.chars !== "string") return undefined;
     if (args.chars === undefined && fields.chars.default !== undefined && fields.chars.default !== "") return undefined;
     if (Object.hasOwn(args, "chars_b64") && (args.chars_b64 !== "" || !isRecord(fields.chars_b64) || fields.chars_b64.type !== "string")) return undefined;

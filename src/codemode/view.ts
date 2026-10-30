@@ -8,7 +8,7 @@ import type { ToolPhase } from "../tool-phase.js";
 import type { NativeToolComponent } from "../wiring.js";
 import type { ActivityRecord, MatchedTerminal, ParentOutcome, ScriptOutput } from "./model.js";
 import { outputPartPreview, type OutputPart } from "./output.js";
-import type { CodemodeParent, CodemodeRuntime, CompletedBody } from "./pi.js";
+import type { CodemodeParent, CodemodeRuntime, CompletedBody, ActivitySummarySource } from "./pi.js";
 import { summarizeActivity, type CodemodeSummary } from "./summary.js";
 
 export interface ItemDescription {
@@ -23,7 +23,8 @@ export interface GroupRow extends Component, DisclosureTarget {
 }
 export interface ItemToolkit {
   row(read: (width: number | undefined, format: (parts: LineParts, error?: boolean) => string) => string): Component & { readonly text: string; dispose(): void };
-  describe(record: ActivityRecord, matched: MatchedTerminal | undefined, parent: NativeToolComponent): ItemDescription;
+  describe(record: ActivityRecord, matched: MatchedTerminal | undefined, source: ActivitySummarySource | undefined,
+    parent: Readonly<{cwd: string | undefined; final: boolean}>): ItemDescription;
   group(id: string, classification: ToolClassification, members: () => readonly GroupMemberSummary[], parent: () => DisclosureTarget,
     indent: () => number): GroupRow;
   requestRender(): void;
@@ -58,7 +59,7 @@ class SectionRow implements Component, DisclosureTarget {
   }
   private makeHeader() {
     return this.scope.toolkit.row((_width, format) => " ".repeat(this.scope.headingIndent) +
-      format({ marker: this.expanded ? "▾" : "▸", action: this.role === "source" ? "Source" : "Script output",
+      format({ marker: this.expanded ? "▾" : "▸", action: this.role === "source" ? "Call" : "Script output",
         rest: this.role === "source" ? "" : ` (${this.scope.outputCount} ${this.scope.formattedOutput ? "sections" : "items"})` }));
   }
   reconfigure(): void { this.headerValue.dispose(); this.headerValue = this.makeHeader(); }
@@ -131,22 +132,28 @@ class ItemRow implements Component, DisclosureTarget {
   get label(): string { return this.header.text; }
   get parent(): DisclosureTarget { return this.group ?? this.section ?? this.scope.parentTarget; }
   get summary(): GroupMemberSummary { return this.description!.member; }
+  get receipt(): MatchedTerminal | undefined { return this.matched; }
 
   update(record: ActivityRecord, matched: MatchedTerminal | undefined): void {
+    this.published = undefined;
     if (this.matched?.terminal !== matched?.terminal || this.matched?.request !== matched?.request) {
       this.body?.dispose(); this.body = undefined;
-    }
+    } else if (this.scope.binding.facts.final) this.body?.invalidate();
     this.matched = matched;
-    this.description = this.scope.toolkit.describe(record, matched, this.scope.original);
+    const binding = this.scope.binding;
+    this.description = this.scope.toolkit.describe(record, matched, matched ? undefined : binding.summarySource(record),
+      {cwd: this.scope.original.cwd, final: binding.facts.final});
     this.metadata = new Text([
       record.preview === undefined ? undefined : `Arguments preview: ${record.preview}`,
       `Status: ${record.status}`, record.error,
+      record.status === "running" && binding.facts.final && !matched ? "Completion: unknown (parent finished without a terminal child observation)." : undefined,
       record.durationMs === undefined ? undefined : `Recorded duration: ${record.durationMs} ms`,
       record.cost === undefined ? undefined : `Cost: $${record.cost}`,
       "Detailed result unavailable for this recorded activity.",
     ].filter(value => value !== undefined).map(value => stripTerminalSequences(value!)).join("\n"), 0, 0);
   }
   updateOutput(output: ScriptOutput | OutputPart, caption = "Script output", preview = ""): void {
+    this.published = undefined;
     if (this.output !== output) { this.body?.dispose(); this.body = undefined; }
     const plain = stripTerminalSequences(preview).replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").trim();
     this.output = output; this.outputCaption = caption; this.outputPreview = visibleWidth(plain) > 0 ? plain : "";
@@ -210,6 +217,7 @@ export class CodemodeScope implements Component, CodemodeProjection {
   private sourceSlot: Component | undefined;
   private sourceBodyLines: { width: number; lines: string[] } | undefined;
   private rows = new Map<number, ItemRow>();
+  private rowSerial = 0;
   private outputRow: ItemRow | undefined;
   private outputSection: SectionRow | undefined;
   private outputRows: ItemRow[] = [];
@@ -230,7 +238,13 @@ export class CodemodeScope implements Component, CodemodeProjection {
     private parentVisible: () => boolean, key: string) {
     this.prefix = key;
     this.model = binding.facts;
-    binding.onChange = () => this.changed();
+    binding.onChange = () => {
+      this.frame = undefined; this.parentFrame = undefined; this.parentNodes = undefined;
+      this.sourceBodyLines = undefined; this.sourceSlot = undefined; this.dataRevision = -1;
+      if (binding.facts.faulted) this.releaseRows();
+      else this.sync();
+      this.changed();
+    };
     const scope = this;
     this.sourceBody = {
       get children() { const source = scope.sourceSlot ?? binding.source(); return source ? [source] : []; },
@@ -254,7 +268,14 @@ export class CodemodeScope implements Component, CodemodeProjection {
   get formattedOutput(): boolean { return this.binding.facts.output?.partition === "formatted"; }
   get summaryRevision(): number { return this.revision; }
   summary(phase: ToolPhase): CodemodeSummary {
-    return summarizeActivity(this.binding.facts.records, this.binding.facts.final ? "settled" : phase);
+    const confirmed = new Map<number, boolean>();
+    for (const record of this.binding.facts.records ?? []) {
+      if (record.status !== "running") continue;
+      const matched = this.binding.facts.matched(record);
+      const input = matched ? this.binding.runtime.input(matched) : undefined;
+      if (input) confirmed.set(record.ordinal, input.result.isError);
+    }
+    return summarizeActivity(this.binding.facts.records, this.binding.facts.final ? "settled" : phase, confirmed);
   }
   private layoutState(): string {
     let appearance = "unavailable";
@@ -278,7 +299,9 @@ export class CodemodeScope implements Component, CodemodeProjection {
     this.admitted ||= available;
     return available;
   }
-  get fallback(): boolean { return this.binding.runtime.requested() !== "native" && this.binding.facts.records !== undefined && !this.items; }
+  get fallback(): boolean {
+    return this.binding.runtime.requested() !== "native" && (this.binding.facts.records !== undefined || this.binding.facts.faulted) && !this.items;
+  }
   reattach(target: DisclosureTarget, toolkit: ItemToolkit, visible: () => boolean): void {
     this.parentTarget = target; this.toolkit = toolkit; this.parentVisible = visible; this.attached = true;
     if (this.binding.runtime.requested() === "native") this.wasNative = true;
@@ -304,16 +327,27 @@ export class CodemodeScope implements Component, CodemodeProjection {
     this.sourceRow ??= new SectionRow(this, "source");
     if (this.dataRevision === facts.revision) return;
     this.dataRevision = facts.revision;
+    const prior = this.rows, next = facts.final ? new Map<number, ItemRow>() : new Map(prior);
+    const receipts = new Map([...prior.values()].flatMap(row => row.receipt ? [[row.receipt.terminal, row] as const] : []));
+    const preferred = new Map((facts.records ?? []).flatMap(record => {
+      const matched = facts.matched(record), row = matched && receipts.get(matched.terminal);
+      return facts.final && row && matched && row.receipt?.request === matched.request ? [[record.ordinal, row] as const] : [];
+    }));
+    const reserved = new Set(preferred.values());
     this.ordered = (facts.records ?? []).map(record => {
-      let row = this.rows.get(record.ordinal);
-      if (!row) { row = new ItemRow(this, record.ordinal); this.rows.set(record.ordinal, row); }
+      let row = preferred.get(record.ordinal);
+      const existing = prior.get(record.ordinal);
+      if (!row && existing && !reserved.has(existing)) row = existing;
+      row ??= new ItemRow(this, this.rowSerial++);
+      next.set(record.ordinal, row);
       row.update(record, facts.matched(record));
       return row;
     });
     if (facts.final) {
       const present = new Set(this.ordered);
-      for (const [ordinal, row] of this.rows) if (!present.has(row)) { row.dispose(); this.rows.delete(ordinal); }
+      for (const row of prior.values()) if (!present.has(row)) row.dispose();
     }
+    this.rows = next;
     const previous = new Map(this.ordered.map(row => [row, row.group]));
     this.groupMembers.clear();
     for (const row of this.ordered) row.group = undefined;
@@ -340,8 +374,10 @@ export class CodemodeScope implements Component, CodemodeProjection {
     if (facts.output) {
       const output = facts.output;
       if (output.parts && output.parts.length > 1) {
+        this.outputRow?.dispose(); this.outputRow = undefined;
         this.outputSection ??= new SectionRow(this, "output");
         let texts = 0, images = 0;
+        for (const row of this.outputRows.slice(output.parts.length)) row.dispose();
         this.outputRows = output.parts.map(part => {
           const row = this.outputRows[part.ordinal] ?? new ItemRow(this, `output:${part.ordinal}`);
           if (part.kind === "text") texts++;
@@ -354,9 +390,17 @@ export class CodemodeScope implements Component, CodemodeProjection {
           return row;
         });
       } else {
+        this.outputSection?.dispose(); this.outputSection = undefined;
+        for (const row of this.outputRows) row.dispose();
+        this.outputRows = [];
         this.outputRow ??= new ItemRow(this, "output");
         this.outputRow.updateOutput(output.parts?.[0] ?? output);
       }
+    } else {
+      this.outputRow?.dispose(); this.outputRow = undefined;
+      this.outputSection?.dispose(); this.outputSection = undefined;
+      for (const row of this.outputRows) row.dispose();
+      this.outputRows = [];
     }
   }
 

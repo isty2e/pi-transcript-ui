@@ -31,6 +31,15 @@ it("keeps unknown totals absent instead of falling through to receipt totals", (
   expect(joinLine(summarize([member, { ...member, readPath: undefined }]))).toBe("▸ Read 2 calls");
 });
 
+it("preserves cancellation and unknown completion separately from group failures", () => {
+  const member = {...readMember("same", 0), metrics: {...NO_SUMMARY_METRICS, read: {kind: "unavailable" as const}}};
+  const parts = summarize([{...member, completion: "cancelled"}, {...member, completion: "unknown"}, {...member, isError: true}]);
+  expect(joinLine(parts)).toContain("1 cancelled");
+  expect(joinLine(parts)).toContain("1 completion unknown");
+  expect(parts.failure?.count).toBe(1);
+  expect(joinLine(parts)).not.toContain("0 lines");
+});
+
 it("uses patch sums, not Write sizes, in a mixed capability group", () => {
   const mutation = classifyTool("write", null, writer);
   const write: GroupMemberSummary = {

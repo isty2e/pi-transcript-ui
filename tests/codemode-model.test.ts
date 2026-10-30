@@ -84,6 +84,51 @@ describe("codemode activity facts", () => {
     expect(facts.end("p/1", "read", evidenceHandle())).toBe(false);
   });
 
+  it("reconciles later final graphs while retaining only unchanged real child receipts", () => {
+    const facts = new CodemodeFacts("p");
+    for (const id of ["p/1", "p/2"]) {
+      facts.start(id, "read", evidenceHandle()); facts.end(id, "read", evidenceHandle());
+    }
+    facts.observe(result([record("p/1", "ok"), record("p/2", "ok")], [{type: "text", text: "OLD"}]), false);
+    const first = facts.matched(facts.records![0]!)!, second = facts.matched(facts.records![1]!)!, output = facts.output!;
+    facts.observe({...result([record("p/2", "error")], [{type: "text", text: "CURRENT"}]), isError: true, durationMs: 42}, false);
+
+    expect(facts.faulted).toBe(false); expect(facts.owns(first)).toBe(false); expect(facts.owns(second)).toBe(true);
+    expect(facts.ownsOutput(output)).toBe(false); expect(facts.output?.content).toEqual([{type: "text", text: "CURRENT"}]);
+    expect(facts.outcome).toEqual({isError: true, durationMs: 42}); expect(facts.retainedEvidence().size).toBe(2);
+    expect(facts.start("p/3", "read", evidenceHandle())).toBe(false);
+    expect(facts.end("p/2", "read", evidenceHandle())).toBe(false);
+
+    facts.observe(result([record("p/1", "ok"), record("p/2", "ok")]), false);
+    expect(facts.matched(facts.records![0]!)).toBeUndefined();
+    expect(facts.matched(facts.records![1]!)?.terminal).toBe(second.terminal);
+  });
+
+  it("cannot borrow a retired receipt after a final name change or use an old record as current", () => {
+    const facts = new CodemodeFacts("p");
+    facts.start("p/1", "read", evidenceHandle()); facts.end("p/1", "read", evidenceHandle());
+    facts.observe(result([record("p/1", "ok")]), false);
+    const oldRecord = facts.records![0]!, proof = facts.matched(oldRecord)!;
+    facts.observe(result([record("p/1", "ok", "write")]), false);
+    expect(facts.faulted).toBe(false); expect(facts.owns(proof)).toBe(false);
+    expect(facts.matched(oldRecord)).toBeUndefined(); expect(facts.retainedEvidence().size).toBe(0);
+    facts.observe(result([record("p/1", "ok")]), false);
+    expect(facts.matched(facts.records![0]!)).toBeUndefined();
+  });
+
+  it("revokes final output and body capabilities on malformed replacement or disposal", () => {
+    for (const retire of [(facts: CodemodeFacts) => facts.dispose(),
+      (facts: CodemodeFacts) => facts.observe(result([record("p/1"), record("p/1")]), false)]) {
+      const facts = new CodemodeFacts("p");
+      facts.start("p/1", "read", evidenceHandle()); facts.end("p/1", "read", evidenceHandle());
+      facts.observe(result([record("p/1", "ok")], [{type: "text", text: "OUTPUT"}]), false);
+      const proof = facts.matched(facts.records![0]!)!, output = facts.output!, revision = facts.revision;
+      retire(facts);
+      expect(facts.owns(proof)).toBe(false); expect(facts.ownsOutput(output)).toBe(false);
+      expect(facts.retainedEvidence().size).toBe(0); expect(facts.revision).toBeGreaterThan(revision);
+    }
+  });
+
   it("retains ordinal identity constraints across shorter replacement prefixes", () => {
     const facts = new CodemodeFacts("p");
     facts.observe(result([record("p/1", "ok"), record("p/?")]), true);

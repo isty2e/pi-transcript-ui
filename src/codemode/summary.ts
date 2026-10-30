@@ -7,6 +7,7 @@ export interface CodemodeSummary {
   readonly calls: Readonly<{
     total: number;
     running: number;
+    completionUnknown?: number;
     errors: number;
     cancelled: number;
     names: readonly Readonly<{ name: string; count: number }>[];
@@ -14,14 +15,18 @@ export interface CodemodeSummary {
   }> | undefined;
 }
 
-function nestedCalls(records: readonly ActivityRecord[] | undefined): CodemodeSummary["calls"] {
+function nestedCalls(records: readonly ActivityRecord[] | undefined, phase: ToolPhase, confirmed?: ReadonlyMap<number, boolean>): CodemodeSummary["calls"] {
   if (!records) return undefined;
   const names = new Map<string, number>();
-  let running = 0, errors = 0, cancelled = 0, moreNames = false;
+  let running = 0, completionUnknown = 0, errors = 0, cancelled = 0, moreNames = false;
 
   for (const call of records) {
     switch (call.status) {
-      case "running": running++; break;
+      case "running":
+        if (confirmed?.get(call.ordinal) !== undefined) errors += confirmed.get(call.ordinal) ? 1 : 0;
+        else if (phase === "settled") completionUnknown++;
+        else running++;
+        break;
       case "error": errors++; break;
       case "cancelled": cancelled++; break;
       case "ok": break;
@@ -34,11 +39,12 @@ function nestedCalls(records: readonly ActivityRecord[] | undefined): CodemodeSu
   }
 
   return { total: records.length, running, errors, cancelled,
+    ...(completionUnknown ? {completionUnknown} : {}),
     names: [...names].map(([name, count]) => ({ name, count })), moreNames };
 }
 
-export function summarizeActivity(records: readonly ActivityRecord[] | undefined, phase: ToolPhase): CodemodeSummary {
-  return { phase, calls: nestedCalls(records) };
+export function summarizeActivity(records: readonly ActivityRecord[] | undefined, phase: ToolPhase, confirmed?: ReadonlyMap<number, boolean>): CodemodeSummary {
+  return { phase, calls: nestedCalls(records, phase, confirmed) };
 }
 
 /** Project Pi's recorded codemode facts without interpreting the script or result text. */
