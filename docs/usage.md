@@ -26,6 +26,26 @@ If your terminal cannot distinguish the shortcut, use the slash command. This na
 
 Pi's **Ctrl+O** remains its native bulk tool-output toggle. With the alternative compositor, an item previously toggled by mouse may retain its own state rather than follow that toggle.
 
+## Compaction
+
+Each recorded compaction checkpoint has its own row:
+
+```text
+▸ Compacted from 42,123 tokens
+```
+
+Expand it to see the original summary, native billing and recognized producer explanation/usage entries linked to that checkpoint. Unknown or unlinked entries stay visible in their original positions. The recorded pre-compaction context size is distinct from tokens billed; it is not a measured reduction or an after-count.
+
+Pi's native bulk output toggle also controls checkpoint details. In mouse-capable environments, click the header for independent disclosure. Checkpoints are not tool calls, do not join tool groups and are not included in the tool keyboard navigator.
+
+The active provider-native checkpoint can show a conditional warning when it has no portable summary and its declared provider/API differs from the current model:
+
+```text
+▸ Compacted from 42,123 tokens · ⚠ Current model cannot reuse checkpoint
+```
+
+Changing models on the same declared provider/API does not by itself produce this warning. Historical checkpoints, portable summaries and missing route facts are quiet. This is a display-only route diagnostic, not validation of checkpoint data, authentication or replay readiness. Compaction execution, errors and provider-switch behavior are unchanged.
+
 ## Paths
 
 File and directory path labels keep the first segment and as many nearby parent directories as fit before the filename. For example, as space narrows:

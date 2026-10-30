@@ -99,6 +99,7 @@ function fixture(options: { expanded?: boolean; containerExpanded?: boolean; col
       return lookup.call(this, name);
     },
   };
+  runtime.captureMode(mode);
   const definition = mode.getRegisteredToolDefinition("codemode");
   if (options.noOutputResolver) {
     Reflect.deleteProperty(mode.session.extensionRunner, "resolveToolRenderers");
@@ -558,12 +559,13 @@ describe("independent native codemode items", () => {
     expect(Object.getOwnPropertyDescriptor(InteractiveMode.prototype, "getRegisteredToolDefinition")).toEqual(lookup);
   });
 
-  it("rediscovers the native host after retiring and restarting observation", () => {
+  it("accepts the current native host after shutdown without retaining its old binding", () => {
     const h = fixture();
     h.runtime.shutdown();
     h.runtime.start({ mode: "tui", sessionManager: h.mode.sessionManager } as unknown as ExtensionContext);
     h.runtime.setRoot(h.root);
-    h.mode.getRegisteredToolDefinition("codemode");
+    expect(h.runtime.mode()).toBeUndefined();
+    h.runtime.captureMode(h.mode);
     expect(h.runtime.mode()).toBe(h.mode);
     const parent = h.tool("codemode", "restarted", { code: "return 1;" });
     expect(h.runtime.bind(parent as unknown as NativeToolComponent)?.supported()).toBe(true);

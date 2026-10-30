@@ -105,6 +105,7 @@ it("summarizes actual host execution, progress and persisted results without rep
         return lookup.call(this, name);
       },
     };
+    itemsRuntime!.captureMode(mode);
     const itemsDefinition = mode.getRegisteredToolDefinition("codemode");
     itemsPresentation = new CodemodePresentation(itemsRuntime!);
     itemsDetach = attachTranscriptPresentation(itemsRoot, { getTheme: () => theme, requestRender: vi.fn(), codemode: itemsPresentation,

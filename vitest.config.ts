@@ -6,6 +6,10 @@ import { piCapabilities } from "./tests/fixtures/pi-capabilities.js";
 
 const compatibilityCases = [
   "tests/codemode-native-body.test.ts",
+  "tests/native-mode.test.ts",
+  "tests/compaction-source.test.ts",
+  "tests/compaction-presentation.test.ts",
+  "tests/integration/compaction.test.ts",
   "tests/wiring-lifecycle.test.ts",
   "tests/integration/cleanup-notifications.test.ts",
   "tests/fixtures/pi-host.test.ts",
