@@ -2,9 +2,13 @@
 
 [Back to README](../README.md)
 
+## Commands
+
+Run `/transcript-ui` or `/transcript-ui help` to see available commands and the installed version. Type `/transcript-ui ` with a trailing space to see subcommand completions. Use Tab to complete a name, such as `/transcript-ui se` → `/transcript-ui settings`.
+
 ## Expand tools and groups
 
-A collapsed row starts with `▸`; an expanded row starts with `▾` and keeps its summary above the original output. Expanding does not replace or reconstruct the tool's output.
+Collapsed headers start with `▸`; expanded headers start with `▾`. An expanded tool row keeps its summary above the original output. Expanding does not replace or reconstruct the tool's output.
 
 Adjacent exploration calls, such as reads and searches, can form a group. Writes and edits can also group together. Open a group to reach its members, then expand the member you want to inspect. Group and member expansion are independent.
 
