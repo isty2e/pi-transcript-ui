@@ -8,6 +8,7 @@ Compact tool summaries for [Pi](https://pi.dev), with optional purpose text and 
   ▸ Edited src/config.ts (+2 -1) — Update configuration
   ▸ Edited src/defaults.ts (+1 -1) — Adjust defaults
 ▸ Ran npm test (exit 0) — Verify changes
+
 ▸ Compacted from 42,123 tokens
 ```
 

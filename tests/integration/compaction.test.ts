@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { InteractiveMode, SessionManager, VERSION } from "@earendil-works/pi-coding-agent";
-import { Container } from "@earendil-works/pi-tui";
+import { Container, Text } from "@earendil-works/pi-tui";
 import { join } from "node:path";
 import { writeFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
@@ -12,13 +12,31 @@ it("attaches the product before the first tool-free source render and preserves 
   f.display(cp.id); f.display(cp.id, "PROVIDER BILLING", "usage");
   const original = JSON.stringify(f.manager.getEntries());
   f.draw();
-  expect(f.lines()).toEqual(["▸ Compacted from 42,123 tokens"]);
+  expect(f.lines()).toEqual(["", "▸ Compacted from 42,123 tokens"]);
   f.mode.setToolsExpanded(true);
   const opened = f.render();
   expect(opened).toContain("Original checkpoint summary");
   expect(opened).toContain("PRODUCER EXPLANATION");
   expect(opened).toContain("PROVIDER BILLING");
   expect(opened).toContain("1.8k tokens billed");
+  expect(JSON.stringify(f.manager.getEntries())).toBe(original);
+});
+
+it("separates a checkpoint from neighboring content in the native transcript", async () => {
+  const f = await compactionFixture(); f.checkpoint();
+  const original = JSON.stringify(f.manager.getEntries());
+  f.draw();
+  f.mode.chatContainer.children.unshift(new Text("PRECEDING ACTIVITY", 0, 0));
+  f.mode.chatContainer.addChild(new Text("FOLLOWING MESSAGE", 0, 0));
+  const collapsed = ["PRECEDING ACTIVITY", "", "▸ Compacted from 42,123 tokens", "FOLLOWING MESSAGE"];
+
+  expect(f.lines()).toEqual(collapsed);
+  f.mode.setToolsExpanded(true);
+  expect(f.lines().slice(0, 3)).toEqual(["PRECEDING ACTIVITY", "", "▾ Compacted from 42,123 tokens"]);
+  expect(f.render()).toContain("Original checkpoint summary");
+  f.mode.setToolsExpanded(false);
+  expect(f.lines().slice(0, collapsed.length)).toEqual(collapsed);
+  expect(f.render()).not.toContain("Original checkpoint summary");
   expect(JSON.stringify(f.manager.getEntries())).toBe(original);
 });
 
@@ -31,7 +49,7 @@ it("reconstructs the same ID and native bulk state on reload without relying on 
   expect(f.render().match(/Compacted from 42,123 tokens/g)).toHaveLength(1);
   expect(f.manager.getEntries()).toEqual(before);
   f.mode.setToolsExpanded(false);
-  expect(f.lines()[0]).toBe("▸ Compacted from 42,123 tokens");
+  expect(f.lines().slice(0, 2)).toEqual(["", "▸ Compacted from 42,123 tokens"]);
   expect(f.render()).not.toContain("Original checkpoint summary");
   expect(f.render()).not.toContain("PRODUCER EXPLANATION");
 });
@@ -39,7 +57,7 @@ it("reconstructs the same ID and native bulk state on reload without relying on 
 it("preserves independent per-ID disclosure across history reconstruction and ignores retired headers", async () => {
   const f = await compactionFixture(), cp = f.checkpoint(); f.display(cp.id); f.draw();
   const row = f.mode.chatContainer.children[0] as Container;
-  const view = row.children[0] as Container, header = view.children[0]!;
+  const view = row.children[0] as Container, header = view.children.find(component => component.handleMouse)!;
   const click = () => header.handleMouse?.({ type: "click", button: "left", x: 0, y: 0, width: 100, height: 1,
     screenX: 0, screenY: 0, shift: false, alt: false, ctrl: false });
   click();
@@ -167,7 +185,7 @@ it("retries an inactive compaction lease after a transient cleanup failure and r
   });
   await f.owner.session.reload({ beforeSessionStart: () => f.mode.rebuildChatFromMessages() });
   expect(failed).toBe(true);
-  expect(f.lines()[0]).toBe("▸ Compacted from 42,123 tokens");
+  expect(f.lines().slice(0, 2)).toEqual(["", "▸ Compacted from 42,123 tokens"]);
   f.mode.setToolsExpanded(true);
   expect(f.render()).toContain("Original checkpoint summary");
   expect(f.render()).toContain("PRODUCER EXPLANATION");
@@ -209,10 +227,10 @@ it("does not re-enter a foreign forwarder that retained an old inactive source w
   try {
     await f.owner.session.reload({ beforeSessionStart: () => f.mode.rebuildChatFromMessages() });
     expect(failed).toBe(true); expect(forwarded).toBe(1);
-    expect(f.lines()[0]).toBe("▸ Compacted from 42,123 tokens");
+    expect(f.lines().slice(0, 2)).toEqual(["", "▸ Compacted from 42,123 tokens"]);
     f.mode.rebuildChatFromMessages();
     expect(forwarded).toBe(2);
-    expect(f.lines()[0]).toBe("▸ Compacted from 42,123 tokens");
+    expect(f.lines().slice(0, 2)).toEqual(["", "▸ Compacted from 42,123 tokens"]);
   } finally {
     await f.owner.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
     Object.defineProperty(prototype, "renderSessionEntries", original);

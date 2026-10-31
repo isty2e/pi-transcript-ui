@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { Text, visibleWidth } from "@earendil-works/pi-tui";
+import { Container, Text, visibleWidth } from "@earendil-works/pi-tui";
 import { checkpointRouteMismatch, compactionDisplay, declaredCheckpointRoute } from "../src/compaction/producer.js";
 import { CompactionView } from "../src/compaction/view.js";
 
@@ -40,18 +40,43 @@ it("keeps one collapsed line and renders the complete original detail on expansi
   const view = new CompactionView({ tokensBefore: 42123, body: new Text("ORIGINAL SUMMARY", 0, 0),
     billing: [new Text("NATIVE BILLING", 0, 0)], details: [new Text("PRODUCER DETAIL", 0, 0)],
     initialExpanded: false, hasRouteMismatch: () => mismatch, canInteract: () => current, onChange: changed });
-  expect(view.render(120)).toEqual(["▸ Compacted from 42,123 tokens"]);
+  expect(view.render(120)).toEqual(["", "▸ Compacted from 42,123 tokens"]);
   mismatch = true;
-  expect(view.render(120)).toEqual(["▸ Compacted from 42,123 tokens · ⚠ Current model cannot reuse checkpoint"]);
-  expect(visibleWidth(view.render(30)[0]!)).toBeLessThanOrEqual(30);
+  expect(view.render(120)).toEqual(["", "▸ Compacted from 42,123 tokens · ⚠ Current model cannot reuse checkpoint"]);
+  expect(visibleWidth(view.render(30).find(line => line.trim())!)).toBeLessThanOrEqual(30);
   view.setExpanded(true);
-  expect(view.render(120).map(line => line.trimEnd())).toEqual(["▾ Compacted from 42,123 tokens · ⚠ Current model cannot reuse checkpoint",
+  expect(view.render(120).map(line => line.trimEnd())).toEqual(["", "▾ Compacted from 42,123 tokens · ⚠ Current model cannot reuse checkpoint",
     "ORIGINAL SUMMARY", "NATIVE BILLING", "PRODUCER DETAIL"]);
   mismatch = false;
-  expect(view.render(120)[0]).toBe("▾ Compacted from 42,123 tokens");
-  current = false; changed.mockClear();
-  view.children[0]!.handleMouse?.({ type: "click", button: "left", x: 0, y: 0, width: 120, height: 1,
-    screenX: 0, screenY: 0, shift: false, alt: false, ctrl: false });
-  expect(view.expanded).toBe(true);
+  expect(view.render(120).slice(0, 2)).toEqual(["", "▾ Compacted from 42,123 tokens"]);
+  const click = () => view.children.find(component => component.handleMouse)?.handleMouse?.({
+    type: "click", button: "left", x: 0, y: 0, width: 120, height: 1,
+    screenX: 0, screenY: 1, shift: false, alt: false, ctrl: false });
+  changed.mockClear(); click();
+  expect(view.expanded).toBe(false);
+  expect(changed).toHaveBeenLastCalledWith(view, false);
+
+  current = false; changed.mockClear(); click();
+  expect(view.expanded).toBe(false);
   expect(changed).not.toHaveBeenCalled();
+});
+
+it("separates the checkpoint from preceding activity without adding space below it", () => {
+  const view = new CompactionView({ tokensBefore: 42123, body: new Text("ORIGINAL SUMMARY", 0, 0),
+    billing: [new Text("NATIVE BILLING", 0, 0)], details: [new Text("PRODUCER DETAIL", 0, 0)],
+    initialExpanded: false, hasRouteMismatch: () => false, canInteract: () => true, onChange() {} });
+  const transcript = new Container();
+  transcript.addChild(new Text("PRECEDING ACTIVITY", 0, 0));
+  transcript.addChild(view);
+  transcript.addChild(new Text("FOLLOWING MESSAGE", 0, 0));
+  const collapsed = ["PRECEDING ACTIVITY", "", "▸ Compacted from 42,123 tokens", "FOLLOWING MESSAGE"];
+
+  expect(transcript.render(120).map(line => line.trimEnd())).toEqual(collapsed);
+  view.setExpanded(true);
+  expect(transcript.render(120).map(line => line.trimEnd())).toEqual([
+    "PRECEDING ACTIVITY", "", "▾ Compacted from 42,123 tokens",
+    "ORIGINAL SUMMARY", "NATIVE BILLING", "PRODUCER DETAIL", "FOLLOWING MESSAGE",
+  ]);
+  view.setExpanded(false);
+  expect(transcript.render(120).map(line => line.trimEnd())).toEqual(collapsed);
 });

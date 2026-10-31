@@ -32,7 +32,7 @@ Pi's **Ctrl+O** remains its native bulk tool-output toggle. With the alternative
 
 ## Compaction
 
-Each recorded compaction checkpoint has its own row:
+Each recorded compaction checkpoint has its own row, separated from preceding activity by a blank line:
 
 ```text
 ▸ Compacted from 42,123 tokens

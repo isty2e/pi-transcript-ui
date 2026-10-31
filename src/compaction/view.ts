@@ -1,4 +1,4 @@
-import { Container, MouseRegion, truncateToWidth, type Component } from "@earendil-works/pi-tui";
+import { Container, MouseRegion, Spacer, truncateToWidth, type Component } from "@earendil-works/pi-tui";
 
 export interface CompactionViewInput {
   readonly tokensBefore: number;
@@ -43,6 +43,7 @@ export class CompactionView extends Container {
 
   private rebuild(): void {
     this.clear();
+    this.addChild(new Spacer(1));
     this.addChild(this.header);
     if (this.open) {
       this.addChild(this.input.body);
