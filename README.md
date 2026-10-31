@@ -32,13 +32,13 @@ This registers the extension in your Pi user configuration. Start Pi in your pro
 To pin the npm version:
 
 ```sh
-pi install npm:pi-transcript-ui@0.6.0
+pi install npm:pi-transcript-ui@0.6.1
 ```
 
 To install a tagged release from GitHub instead:
 
 ```sh
-pi install git:github.com/isty2e/pi-transcript-ui@v0.6.0
+pi install git:github.com/isty2e/pi-transcript-ui@v0.6.1
 ```
 
 If switching from GitHub to npm, first remove the Git installation:
