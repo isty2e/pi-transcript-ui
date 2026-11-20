@@ -83,12 +83,12 @@ describe("model-only intent transport", () => {
     const message = transport.prepareMessage(call({ value: "native", displaySummary: "Explain the operation" }, "c1", "codemode")) as ReturnType<typeof call>;
     expect(message.content[0]!.arguments).toEqual({ value: "native" });
   });
-  it("retains unsupported JSON root warnings under a custom type label", () => {
+  it("silently preserves unsupported JSON schemas under a custom type label", () => {
     const persist = vi.fn(), transport = new IntentTransport(persist), warn = vi.fn();
     const payload = { tools: [{ type: "custom", name: "custom", input_schema: { ...schema, maxProperties: 1 } }] };
 
     expect(transport.preparePayload(payload, tools, policy, warn)).toEqual(payload);
-    expect(warn).toHaveBeenCalledOnce();
+    expect(warn).not.toHaveBeenCalled();
     const message = call({ value: "native", displaySummary: "Not ours" });
     expect(transport.prepareMessage(message)).toBe(message);
     expect(persist).not.toHaveBeenCalled();
@@ -208,16 +208,25 @@ describe("model-only intent transport", () => {
     const message = call({ displaySummary: "not ours" });
     expect(transport.prepareMessage(message)).toBe(message);
   });
-  it("does not make whole-object constraints unsatisfiable by adding a required property", () => {
+  it("silently preserves schemas with unsupported whole-object constraints", () => {
     const transport = new IntentTransport(vi.fn()), warn = vi.fn();
-    for (const constraint of [{ maxProperties: 1 }, { propertyNames: { pattern: "^[a-z]+$" } }, { allOf: [schema] }]) {
-      const original = envelopes[0]!({ ...schema, ...constraint });
-      expect(transport.preparePayload(original, tools, policy, warn)).toEqual(original);
-      const message = call({ value: "native" });
+    const alternative = { type: "object", properties: { summary: { type: "string" } }, required: ["summary"], additionalProperties: false };
+    const unsupportedSchemas = [
+      { ...schema, maxProperties: 1 },
+      { ...schema, propertyNames: { pattern: "^[a-z]+$" } },
+      { ...schema, allOf: [schema] },
+      { type: "object", properties: { ...schema.properties, ...alternative.properties }, additionalProperties: false, oneOf: [schema, alternative] },
+    ];
+
+    for (const unsupported of unsupportedSchemas) {
+      const original = envelopes[0]!(unsupported);
+      const expected = structuredClone(original);
+      expect(transport.preparePayload(original, [{ name: "custom", parameters: unsupported }], policy, warn)).toEqual(expected);
+      const message = call({ value: "native", displaySummary: "Not ours" });
       expect(transport.prepareMessage(message)).toBe(message);
       expect(transport.get("c1")).toBeUndefined();
     }
-    expect(warn).toHaveBeenCalledTimes(3);
+    expect(warn).not.toHaveBeenCalled();
   });
   it("warns on unsupported provider envelopes and preserves payload", () => {
     const transport = new IntentTransport(vi.fn()), warn = vi.fn();
