@@ -73,7 +73,6 @@ export class IntentTransport {
       const rootConstraints = ["$ref", "$dynamicRef", "$recursiveRef", "allOf", "anyOf", "oneOf", "not", "if", "then", "else", "dependentSchemas", "dependentRequired", "dependencies", "propertyNames", "patternProperties", "minProperties", "maxProperties", "enum", "const", "unevaluatedProperties"];
       if (rootConstraints.some((key) => Object.hasOwn(schema, key)) ||
           (schema.type !== undefined && schema.type !== "object") || (schema.type === undefined && !isRecord(schema.properties))) {
-        warn(`Intent schema not injected for ${name}: unsupported root schema constraints`);
         return item;
       }
       // Responses defaults to strict normalization (including Pi Codex's null).

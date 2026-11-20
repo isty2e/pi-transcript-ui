@@ -32,6 +32,8 @@ Mixed tool groups may have generic labels such as “Exploration … calls” or
 
 Intent is the optional purpose text at the end of a summary.
 
+When Pi Transcript UI cannot extend a tool's parameter schema with a purpose field, it leaves that schema unchanged without warning.
+
 | Menu option | JSON key | Default | Values |
 | --- | --- | --- | --- |
 | Intent | `intent.enabled` | On (`true`) | On / Off |
